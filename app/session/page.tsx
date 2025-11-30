@@ -1,16 +1,16 @@
-"use client";
+"use client"
 
-import { useEffect, useState, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import NovaEngine_Playlist from "@/components/NovaEngine_Playlist";
-import { supabase } from "@/lib/supabaseClient";
-import { getClientUser, signOutClient } from "@/lib/auth";
-import { novaPrices } from "@/lib/novaPrices";
-import PremiumPopup from "@/components/PremiumPopup";
-import NovaToast from "@/components/NovaToast";
+import { useEffect, useState, useMemo, useRef } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
+import NovaEngine_Playlist from "@/components/NovaEngine_Playlist"
+import { signOutClient } from "@/lib/auth"
+import { supabase } from "@/lib/supabaseClient"
+import { novaPrices } from "@/lib/novaPrices"
+import PremiumPopup from "@/components/PremiumPopup"
+import NovaToast from "@/components/NovaToast"
 
 /* ======================================================
- 🎯 Durée des simulations
+ Durée des simulations par type
 ====================================================== */
 const DURATION_MAP: Record<string, number> = {
   internship: 1200,
@@ -21,164 +21,176 @@ const DURATION_MAP: Record<string, number> = {
   goal_setting: 900,
   practice: 900,
   strategic_case: 1200,
-};
+}
+
+/* ======================================================
+ Langues supportées
+====================================================== */
+const SUPPORTED_LANGS = [
+  { code: "en", label: "English" },
+  { code: "fr", label: "Français" },
+  { code: "es", label: "Español" },
+  { code: "it", label: "Italiano" },
+  { code: "de", label: "Deutsch" },
+  { code: "zh", label: "中文" },
+  { code: "ko", label: "한국어" },
+]
 
 export default function SessionPage() {
-  const router = useRouter();
-  const sp = useSearchParams();
+  const router = useRouter()
+  const sp = useSearchParams()
+  const authCheckRef = useRef(false)
 
-  const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [showPremium, setShowPremium] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [ready, setReady] = useState(false)
+  const [user, setUser] = useState<any>(null)
+  const [showPremium, setShowPremium] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  const [type, setType] = useState<string | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [alertPlayed, setAlertPlayed] = useState(false);
-  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+  const [type, setType] = useState<string | null>(null)
+  const [chosenLang, setChosenLang] = useState<string>("en")
 
-  const sid = sp.get("session_id");
-  const activeId = useMemo(() => sid || sessionId, [sid, sessionId]);
-  const durationSec = useMemo(() => (type ? DURATION_MAP[type] : 1200), [type]);
-  const alertDelayMs = (durationSec - 120) * 1000;
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [alertPlayed, setAlertPlayed] = useState(false)
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null)
 
-  /* ======================================================
-  1️⃣ AUTH STABLE — VERSION STRIPE-SAFE
-  ====================================================== */
-  useEffect(() => {
-    let isMounted = true;
+  const sid = sp.get("session_id")
+  const activeId = useMemo(() => sid || sessionId, [sid, sessionId])
 
-    async function restoreUser() {
-      console.log("🔐 [AUTH] Vérification utilisateur… sid =", sid);
-
-      // 1. Si on revient de Stripe → attendre un peu pour que Supabase recolle les cookies
-      if (sid) {
-        console.log("⏳ Retour Stripe → attente 1.2s avant check");
-        await new Promise((res) => setTimeout(res, 1200));
-      }
-
-      // 2. Premier essai
-      let session = await supabase.auth.getSession();
-      if (session?.data?.session?.user) {
-        console.log("🟢 [AUTH] User trouvé (first try):", session.data.session.user.id);
-        setUser(session.data.session.user);
-        setReady(true);
-        return;
-      }
-
-      // 3. Multi-retry (Stripe-safe)
-      for (let i = 0; i < 5; i++) {
-        console.log(`🔄 [AUTH] Retry #${i + 1}…`);
-        await new Promise((res) => setTimeout(res, 800));
-
-        let sess = await supabase.auth.getSession();
-        if (sess?.data?.session?.user) {
-          console.log("🟢 [AUTH] User restauré après retry:", sess.data.session.user.id);
-          setUser(sess.data.session.user);
-          setReady(true);
-          return;
-        }
-      }
-
-      // 4. Si on arrive de Stripe → ne pas rediriger
-      if (sid) {
-        console.log("🟡 [AUTH] Aucun user MAIS Stripe flow → ready = true");
-        setReady(true);
-        return;
-      }
-
-      // 5. Cas normal : pas connecté → redirection
-      console.log("🔴 [AUTH] Aucun user → redirection login");
-      router.replace("/auth?next=/session");
-    }
-
-    restoreUser();
-    return () => {
-      isMounted = false;
-    };
-  }, [sid, router]);
+  const durationSec = useMemo(() => (type ? DURATION_MAP[type] || 1200 : 1200), [type])
+  const alertDelayMs = (durationSec - 120) * 1000
 
   /* ======================================================
-  2️⃣ Polling Stripe : pending → paid
+   1. Vérifie la connexion utilisateur
+   Ajout de retry avec refreshSession pour gérer le retour de Stripe
   ====================================================== */
   useEffect(() => {
-    if (!sid) return;
+    if (authCheckRef.current) return
+    authCheckRef.current = true
 
-    console.log("💳 [STRIPE] Start polling for session:", sid);
+    const checkAuth = async (attempt = 1): Promise<void> => {
+      console.log(`[v0] Auth check attempt ${attempt}...`)
 
-    let attempts = 0;
+      // Force refresh de la session pour récupérer les cookies
+      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
 
-    const checkStatus = async () => {
-      const { data, error } = await supabase
-        .from("nova_sessions")
-        .select("status")
-        .eq("id", sid)
-        .maybeSingle();
+      if (refreshError) {
+        console.log(`[v0] Refresh session error:`, refreshError.message)
+      }
+
+      // Essayer getSession
+      const { data, error } = await supabase.auth.getSession()
 
       if (error) {
-        console.log("⚠️ Supabase error:", error.message);
-        return;
+        console.warn(`[v0] getSession error:`, error.message)
       }
 
-      const status = data?.status || "unknown";
-      console.log(`[STRIPE] Poll #${attempts + 1} →`, status);
-      setSessionStatus(status);
+      const u = data?.session?.user ?? null
+      console.log(`[v0] User found:`, u?.email || "none")
 
-      if (["paid", "active", "started"].includes(status)) {
-        console.log("🟢 Payment confirmed → launching nova");
-        router.replace(`/session?session_id=${sid}`);
-        return;
+      if (u) {
+        setUser(u)
+        setReady(true)
+        return
       }
 
-      if (attempts < 20) {
-        attempts++;
-        setTimeout(checkStatus, 1500);
+      // Si on a un session_id de Stripe, on attend un peu plus
+      if (sid && attempt < 5) {
+        console.log(`[v0] Stripe return detected, retrying in 1s... (attempt ${attempt}/5)`)
+        await new Promise((r) => setTimeout(r, 1000))
+        return checkAuth(attempt + 1)
+      }
+
+      // Pas d'utilisateur après toutes les tentatives
+      if (!sid) {
+        console.warn("[v0] No user, no Stripe session → redirect to /auth")
+        router.replace("/auth?next=/session")
       } else {
-        console.log("⛔ Stripe timeout → return dashboard");
-        router.push("/dashboard");
+        // On a un sid mais pas d'user - on continue quand même
+        // Le paiement sera vérifié par le polling
+        console.log("[v0] Stripe session found but no user - continuing anyway")
+        setReady(true)
       }
-    };
+    }
 
-    checkStatus();
-  }, [sid, router]);
+    checkAuth()
+  }, [router, sid])
 
   /* ======================================================
-  3️⃣ Alerte vocale T-2 minutes
+   2. Polling Stripe : pending → paid
   ====================================================== */
   useEffect(() => {
-    if (!activeId) return;
+    if (!sid) return
+
+    console.log("🎯 Début du polling Stripe pour session:", sid)
+    let attempts = 0
+
+    const checkStatus = async () => {
+      console.log(`🔄 Vérification #${attempts + 1} du statut pour ${sid}...`)
+      const { data, error } = await supabase.from("nova_sessions").select("status, id").eq("id", sid).maybeSingle()
+
+      if (error) {
+        console.warn("⚠️ Erreur Supabase:", error.message)
+        return
+      }
+
+      const status = data?.status || "unknown"
+      console.log(`📊 Statut actuel de la session ${sid}:`, status)
+      setSessionStatus(status)
+
+      if (status === "paid" || status === "active" || status === "started") {
+        console.log("🚀 Session confirmée (paid/active) → lancement moteur Nova")
+        router.replace(`/session?session_id=${sid}`)
+      } else if (attempts < 20) {
+        attempts++
+        setTimeout(checkStatus, 1500)
+      } else {
+        console.warn("❌ Session toujours pending après 30s → retour dashboard")
+        router.push("/dashboard")
+      }
+    }
+
+    checkStatus()
+  }, [sid, router])
+
+  /* ======================================================
+   3. Alerte vocale T-2 min
+  ====================================================== */
+  useEffect(() => {
+    if (!activeId) return
 
     const timer = setTimeout(() => {
       if (!alertPlayed) {
-        const msg = new SpeechSynthesisUtterance("You have two minutes remaining.");
-        msg.lang = "en-US";
-        window.speechSynthesis.speak(msg);
-        setAlertPlayed(true);
+        const msg = new SpeechSynthesisUtterance("You have two minutes remaining.")
+        msg.lang = "en-US"
+        window.speechSynthesis.speak(msg)
+        setAlertPlayed(true)
       }
-    }, alertDelayMs);
+    }, alertDelayMs)
 
-    return () => clearTimeout(timer);
-  }, [activeId, alertDelayMs, alertPlayed]);
+    return () => clearTimeout(timer)
+  }, [activeId, alertDelayMs, alertPlayed])
 
   /* ======================================================
-  4️⃣ Créer session Nova
+   4. Création de session Nova
   ====================================================== */
   async function startSimulation(selectedType: string) {
-    setLoading(true);
-    setErrorMsg(null);
+    setLoading(true)
+    setErrorMsg(null)
 
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("id, career_stage, domain, goal")
         .eq("id", user.id)
-        .single();
+        .single()
 
       if (!profile) {
-        router.push("/onboarding");
-        return;
+        router.push("/onboarding")
+        return
       }
+
+      const duration = DURATION_MAP[selectedType] || 900
 
       const payload = {
         user_id: profile.id,
@@ -186,76 +198,88 @@ export default function SessionPage() {
         domain: profile.domain,
         goal: profile.goal,
         career_stage: profile.career_stage,
-        duration_limit: DURATION_MAP[selectedType],
-      };
+        duration_limit: duration,
+        chosen_lang: chosenLang,
+      }
 
       const res = await fetch("/api/engine/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
+      })
 
-      const json = await res.json();
+      const json = await res.json()
 
       if (json?.url) {
-        window.location.href = json.url;
-        return;
+        window.location.href = json.url
+        return
       }
 
       if (json?.bypass || json?.mock) {
-        router.push(`/session?session_id=${json.session_id}`);
-        return;
+        router.push(`/session?session_id=${json.session_id}`)
+        return
       }
 
       if (json?.require_cv) {
-        setShowPremium(true);
-        return;
+        setShowPremium(true)
+        return
       }
 
-      setSessionId(json.session_id);
-    } catch (e) {
-      setErrorMsg("Server error");
+      if (json?.error) {
+        setErrorMsg(json.error)
+      } else if (json?.session_id) {
+        setSessionId(json.session_id)
+      } else {
+        setErrorMsg("Unexpected server response.")
+      }
+    } catch (err) {
+      setErrorMsg("Server error, try again.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
   /* ======================================================
-  5️⃣ Cas de garde
+   5. Cas de garde
   ====================================================== */
   if (!ready) {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
-        <div className="animate-pulse text-center">Nova is preparing your simulation…</div>
+        <div className="animate-pulse text-center">
+          <h1 className="text-2xl font-semibold mb-2 text-blue-400">Nova is preparing your simulation…</h1>
+          <p className="text-gray-400 text-sm">Please wait a few seconds.</p>
+        </div>
       </main>
-    );
+    )
   }
 
-  if (
-    activeId &&
-    (!activeId.match(/^[0-9a-fA-F-]{36}$/) || activeId === "[object Object]")
-  ) {
+  if (activeId && (!activeId.match(/^[0-9a-fA-F-]{36}$/) || activeId === "[object Object]")) {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
         <div className="text-center">
-          <h1 className="text-red-500 text-xl">Invalid session ID</h1>
+          <h1 className="text-2xl font-bold text-red-500">Invalid session ID</h1>
+          <p className="text-gray-400 text-sm mt-2">Please restart your simulation.</p>
         </div>
       </main>
-    );
+    )
   }
 
   if (sid && sessionStatus === "pending") {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
         <div className="animate-pulse text-center">
-          Payment pending… Please wait.
+          <h1 className="text-2xl font-semibold mb-2 text-blue-400">Nova is preparing your session…</h1>
+          <p className="text-gray-400 text-sm">Please wait, payment is being confirmed.</p>
+          <p className="text-gray-500 text-xs mt-4">
+            Session ID: {sid} | Status: {sessionStatus}
+          </p>
         </div>
       </main>
-    );
+    )
   }
 
   /* ======================================================
-  6️⃣ Start engine
+   6. LANCEMENT DU MOTEUR NOVA
   ====================================================== */
   if (activeId) {
     return (
@@ -263,11 +287,11 @@ export default function SessionPage() {
         <NovaEngine_Playlist sessionId={activeId} />
         <NovaToast />
       </main>
-    );
+    )
   }
 
   /* ======================================================
-  7️⃣ Page de sélection
+   7. PAGE DE SÉLECTION (par défaut)
   ====================================================== */
   return (
     <main className="min-h-screen bg-black text-white p-10 flex flex-col gap-8">
@@ -276,21 +300,33 @@ export default function SessionPage() {
           <h1 className="text-3xl font-bold text-blue-400">Nova Simulation</h1>
           <p className="text-gray-400 text-sm">{user?.email}</p>
         </div>
-        <button
-          onClick={signOutClient}
-          className="text-sm bg-gray-800 px-4 py-2 rounded-lg hover:bg-gray-700"
-        >
+        <button onClick={signOutClient} className="text-sm bg-gray-800 px-4 py-2 rounded-lg hover:bg-gray-700">
           Sign out
         </button>
       </div>
 
-      <div className="bg-gray-800/60 p-6 rounded-xl border border-white/10">
-        <p className="text-lg font-semibold text-white">Choose your interview type:</p>
-        <p className="text-gray-400 text-sm mt-1">
-          Each session lasts between 15–20 minutes. Full feedback included.
-        </p>
+      {/* Choix de la langue */}
+      <div className="bg-gray-800/60 rounded-xl p-6 border border-white/10">
+        <p className="text-lg font-semibold mb-2 text-white">Choose your interview language:</p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-4">
+          {SUPPORTED_LANGS.map((lng) => (
+            <button
+              key={lng.code}
+              onClick={() => setChosenLang(lng.code)}
+              className={`px-4 py-3 rounded-lg border ${
+                chosenLang === lng.code
+                  ? "border-blue-500 bg-blue-500/20 text-blue-300"
+                  : "border-gray-700 bg-gray-900 hover:border-blue-400"
+              } transition`}
+            >
+              {lng.label}
+            </button>
+          ))}
+        </div>
       </div>
 
+      {/* CHOIX DES TYPES */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
         {Object.entries(DURATION_MAP).map(([key, dur]) => (
           <div
@@ -302,27 +338,23 @@ export default function SessionPage() {
                 : "border-gray-700 bg-gray-900/40 hover:border-blue-400/50"
             }`}
           >
-            <p className="text-white text-lg capitalize">{key.replace("_", " ")}</p>
-            <p className="text-gray-400 text-sm mt-2">
-              Duration: {Math.floor(dur / 60)} min
-            </p>
-            <p className="text-blue-400 font-semibold mt-1">
-              ${novaPrices.find((p) => p.id === key)?.price.toFixed(2)}
+            <strong className="capitalize block text-white text-lg">{key.replace("_", " ")}</strong>
+            <p className="text-gray-400 text-sm mt-2">Duration: {Math.floor(dur / 60)} min</p>
+            <p className="text-blue-400 text-sm mt-1">
+              ${novaPrices.find((p) => p.id === key)?.price.toFixed(2) || "3.99"}
             </p>
           </div>
         ))}
       </div>
 
-      {errorMsg && <p className="text-red-400">{errorMsg}</p>}
+      {errorMsg && <p className="text-red-400 text-sm">{errorMsg}</p>}
 
       <div className="flex justify-end mt-4">
         <button
           disabled={!type || loading}
           onClick={() => startSimulation(type!)}
-          className={`px-6 py-3 rounded-lg ${
-            type
-              ? "bg-blue-600 hover:bg-blue-500 text-white"
-              : "bg-gray-700 text-gray-400 cursor-not-allowed"
+          className={`px-6 py-3 rounded-lg font-semibold ${
+            type ? "bg-blue-600 hover:bg-blue-500 text-white" : "bg-gray-600 text-gray-400 cursor-not-allowed"
           }`}
         >
           {loading ? "Starting…" : "Start simulation"}
@@ -332,5 +364,5 @@ export default function SessionPage() {
       {showPremium && <PremiumPopup onClose={() => setShowPremium(false)} />}
       <NovaToast />
     </main>
-  );
+  )
 }

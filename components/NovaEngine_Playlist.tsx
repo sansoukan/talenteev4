@@ -752,7 +752,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [])
 
   return (
-    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col">
+    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col font-sans">
       <header className="h-14 bg-black/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
           <img
@@ -773,10 +773,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       </header>
 
       {/* Main content area */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden gap-4 p-4">
         {/* Video area - takes all available space */}
         <div
-          className="flex-1 relative bg-black"
+          className="flex-1 relative bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden"
           onMouseEnter={() => setUserCameraHovered(true)}
           onMouseLeave={() => setUserCameraHovered(false)}
         >
@@ -826,8 +826,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               className="absolute inset-0 w-full h-full object-contain"
             />
           ) : (
-            <div className="absolute inset-0 bg-gradient-to-br from-black via-zinc-900 to-black flex items-center justify-center">
-              <div className="text-white/40 text-lg font-light">Preparing interview...</div>
+            <div className="absolute inset-0 bg-gradient-to-br from-zinc-900 via-black to-zinc-900 flex items-center justify-center">
+              <div className="text-white/60 text-lg font-medium tracking-wide">Preparing interview...</div>
             </div>
           )}
 
@@ -874,7 +874,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               onMouseLeave={() => setUserCameraHovered(false)}
             >
               <div
-                className={`rounded-2xl overflow-hidden border border-white/20 bg-black shadow-2xl transition-all duration-300 ${
+                className={`rounded-2xl overflow-hidden border-2 border-white/20 bg-black shadow-2xl shadow-black/50 transition-all duration-300 ${
                   userCameraHovered ? "w-56 h-42" : "w-40 h-30"
                 }`}
                 style={{ width: userCameraHovered ? 224 : 160, height: userCameraHovered ? 168 : 120 }}
@@ -891,7 +891,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                   className="w-full h-full object-cover scale-x-[-1]"
                 />
               </div>
-              <span className="absolute bottom-2 left-3 text-xs text-white/80 bg-black/60 backdrop-blur-xl px-2 py-0.5 rounded-full font-medium">
+              <span className="absolute bottom-2 left-3 text-xs text-white bg-black/70 backdrop-blur-xl px-2.5 py-1 rounded-full font-medium border border-white/10">
                 You
               </span>
             </div>
@@ -912,19 +912,25 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         </div>
 
         {/* Chat sidebar - fixed width */}
-        <aside className="w-80 lg:w-96 bg-black/50 border-l border-white/10 flex flex-col">
+        <aside className="w-80 lg:w-96 flex flex-col rounded-2xl border border-white/15 bg-zinc-900/80 backdrop-blur-xl overflow-hidden shadow-2xl shadow-black/30">
           {/* Chat header */}
-          <div className="h-14 px-4 flex items-center border-b border-white/10 bg-black/80">
-            <h2 className="font-semibold text-white/80">Chat</h2>
+          <div className="h-14 px-5 flex items-center gap-3 border-b border-white/10 bg-black/40">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2}>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+                />
+              </svg>
+            </div>
+            <h2 className="font-semibold text-white tracking-wide">Nova Chat</h2>
           </div>
 
           {/* Chat messages */}
           <div className="flex-1 overflow-hidden">
             <NovaChatBox_TextOnly ref={chatRef} onUserMessage={handleUserChatMessage} />
           </div>
-
-          {/* Recorder at bottom */}
-          <div className="p-4 border-t border-white/10 bg-black/90">{/* NovaRecorder is now positioned here */}</div>
         </aside>
       </div>
 

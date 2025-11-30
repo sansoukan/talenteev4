@@ -7,6 +7,7 @@ import { useRepeatIntent } from "@/hooks/useRepeatIntent"
 import { MetalButton } from "@/components/ui/metal-button"
 import VideoPlayer from "@/components/VideoPlayer"
 import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox_TextOnly"
+import { Volume2, VolumeX } from "lucide-react"
 
 const isDefined = (x: any) => x !== undefined && x !== null
 
@@ -115,6 +116,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const [micEnabled, setMicEnabled] = useState(false)
   const [isListeningPhase, setIsListeningPhase] = useState(false)
   const [isSilencePhase, setIsSilencePhase] = useState(false)
+  const [isMuted, setIsMuted] = useState(true) // Add isMuted state - starts muted, unmutes on Start Simulation
   const idleLoopStartedRef = useRef(false)
 
   const responseMetrics = useRef<ResponseMetrics>({
@@ -445,6 +447,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       setIsPlaying(true)
       setVideoPaused(false)
       setHasStarted(true)
+      setIsMuted(false) // Unmute video on Start Simulation
 
       await startNovaTranscription({
         sessionId,
@@ -467,7 +470,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
       const v = videoRef.current
       if (v) {
-        v.muted = true
+        v.muted = false // Unmute video on Start Simulation
         await v
           .play()
           .then(() => console.log("▶️ Lecture vidéo démarrée"))
@@ -785,8 +788,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             <VideoPlayer
               ref={videoRef}
               src={videoSrc}
-              autoPlay
-              muted
+              autoPlay={!isMuted}
+              muted={isMuted}
               playsInline
               onPlay={() => {
                 console.log("Lecture en cours:", videoSrc)
@@ -837,6 +840,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                 variant="primary"
                 onClick={async () => {
                   console.log("Bouton START clique!")
+                  setIsMuted(false) // Unmute video when starting simulation
                   await handleStart()
                 }}
               >
@@ -909,6 +913,17 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               onSilenceStart={handleSilenceStart}
             />
           </div>
+
+          {/* Volume toggle button - Apple style */}
+          {hasStarted && (
+            <button
+              onClick={() => setIsMuted(!isMuted)}
+              className="absolute bottom-6 left-6 w-10 h-10 rounded-full bg-black/50 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/80 hover:text-white hover:bg-black/70 transition-all duration-200"
+              title={isMuted ? "Unmute" : "Mute"}
+            >
+              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+            </button>
+          )}
         </div>
 
         <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex overflow-hidden">

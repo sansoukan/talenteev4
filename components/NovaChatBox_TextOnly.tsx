@@ -33,7 +33,7 @@ const NovaChatBox_TextOnly = forwardRef<NovaChatBoxTextOnlyRef, { onUserMessage:
         <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-thin scrollbar-thumb-white/20 scrollbar-track-transparent">
           {messages.length === 0 && (
             <div className="flex items-center justify-center h-full">
-              <p className="text-white/50 text-sm font-medium">Messages will appear here...</p>
+              <p className="text-white/70 text-sm font-medium">Messages will appear here...</p>
             </div>
           )}
           {messages.map((msg, i) => (
@@ -41,11 +41,11 @@ const NovaChatBox_TextOnly = forwardRef<NovaChatBoxTextOnlyRef, { onUserMessage:
               <div
                 className={`max-w-[85%] px-4 py-3 shadow-lg ${
                   msg.sender === "nova"
-                    ? "bg-gradient-to-br from-white/15 to-white/5 backdrop-blur-xl text-white rounded-2xl rounded-bl-md border border-white/10"
+                    ? "bg-zinc-800 text-white rounded-2xl rounded-bl-md border border-white/20"
                     : "bg-gradient-to-br from-cyan-500 to-blue-600 text-white font-medium rounded-2xl rounded-br-md"
                 }`}
               >
-                <div className="text-sm leading-relaxed">{msg.text}</div>
+                <div className="text-[15px] leading-relaxed text-white">{msg.text}</div>
               </div>
             </div>
           ))}
@@ -60,7 +60,7 @@ const NovaChatBox_TextOnly = forwardRef<NovaChatBoxTextOnlyRef, { onUserMessage:
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               placeholder="Type a message..."
-              className="flex-1 bg-transparent text-white text-sm placeholder:text-white/40 focus:outline-none font-medium"
+              className="flex-1 bg-transparent text-white text-sm placeholder:text-white/60 focus:outline-none font-medium"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault()

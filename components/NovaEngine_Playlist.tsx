@@ -752,7 +752,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [])
 
   return (
-    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col font-sans antialiased">
+    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col antialiased">
       <header className="h-14 bg-black/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
           <img
@@ -773,10 +773,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       </header>
 
       {/* Main content area */}
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
+      <div className="flex-1 flex gap-4 p-4 overflow-hidden items-stretch">
         {/* Video area - takes all available space */}
         <div
-          className="flex-1 relative bg-zinc-900/50 rounded-2xl overflow-hidden border border-white/10"
+          className="flex-1 relative bg-zinc-900/50 rounded-3xl overflow-hidden border border-white/10"
           onMouseEnter={() => setUserCameraHovered(true)}
           onMouseLeave={() => setUserCameraHovered(false)}
         >
@@ -911,7 +911,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           </div>
         </div>
 
-        <aside className="w-80 lg:w-96 bg-zinc-900/80 backdrop-blur-xl rounded-2xl border border-white/15 flex flex-col overflow-hidden">
+        <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex overflow-hidden">
           <div className="h-14 px-5 flex items-center gap-3 border-b border-white/10 bg-zinc-800/50">
             <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

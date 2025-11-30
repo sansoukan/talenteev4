@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useState, useMemo, useRef } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import NovaEngine_Playlist from "@/components/NovaEngine_Playlist"
-import { signOutClient } from "@/lib/auth"
+import { getClientUser, signOutClient } from "@/lib/auth"
 import { supabase } from "@/lib/supabaseClient"
 import { novaPrices } from "@/lib/novaPrices"
 import PremiumPopup from "@/components/PremiumPopup"
@@ -39,7 +39,6 @@ const SUPPORTED_LANGS = [
 export default function SessionPage() {
   const router = useRouter()
   const sp = useSearchParams()
-  const authCheckRef = useRef(false)
 
   const [ready, setReady] = useState(false)
   const [user, setUser] = useState<any>(null)
@@ -62,59 +61,23 @@ export default function SessionPage() {
 
   /* ======================================================
    1. Vérifie la connexion utilisateur
-   Ajout de retry avec refreshSession pour gérer le retour de Stripe
+   Restored simple auth check using getClientUser
   ====================================================== */
   useEffect(() => {
-    if (authCheckRef.current) return
-    authCheckRef.current = true
-
-    const checkAuth = async (attempt = 1): Promise<void> => {
-      console.log(`[v0] Auth check attempt ${attempt}...`)
-
-      // Force refresh de la session pour récupérer les cookies
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession()
-
-      if (refreshError) {
-        console.log(`[v0] Refresh session error:`, refreshError.message)
-      }
-
-      // Essayer getSession
-      const { data, error } = await supabase.auth.getSession()
-
-      if (error) {
-        console.warn(`[v0] getSession error:`, error.message)
-      }
-
-      const u = data?.session?.user ?? null
-      console.log(`[v0] User found:`, u?.email || "none")
-
-      if (u) {
-        setUser(u)
-        setReady(true)
+    ;(async () => {
+      console.log("[v0] Checking user authentication...")
+      const u = await getClientUser()
+      console.log("[v0] User result:", u ? u.email : "no user found")
+      if (!u) {
+        console.log("[v0] Redirecting to /auth?next=/session")
+        router.replace("/auth?next=/session")
         return
       }
-
-      // Si on a un session_id de Stripe, on attend un peu plus
-      if (sid && attempt < 5) {
-        console.log(`[v0] Stripe return detected, retrying in 1s... (attempt ${attempt}/5)`)
-        await new Promise((r) => setTimeout(r, 1000))
-        return checkAuth(attempt + 1)
-      }
-
-      // Pas d'utilisateur après toutes les tentatives
-      if (!sid) {
-        console.warn("[v0] No user, no Stripe session → redirect to /auth")
-        router.replace("/auth?next=/session")
-      } else {
-        // On a un sid mais pas d'user - on continue quand même
-        // Le paiement sera vérifié par le polling
-        console.log("[v0] Stripe session found but no user - continuing anyway")
-        setReady(true)
-      }
-    }
-
-    checkAuth()
-  }, [router, sid])
+      setUser(u)
+      setReady(true)
+      console.log("[v0] User authenticated, ready=true")
+    })()
+  }, [router])
 
   /* ======================================================
    2. Polling Stripe : pending → paid
@@ -122,30 +85,30 @@ export default function SessionPage() {
   useEffect(() => {
     if (!sid) return
 
-    console.log("🎯 Début du polling Stripe pour session:", sid)
+    console.log("[v0] Starting Stripe polling for session:", sid)
     let attempts = 0
 
     const checkStatus = async () => {
-      console.log(`🔄 Vérification #${attempts + 1} du statut pour ${sid}...`)
-      const { data, error } = await supabase.from("nova_sessions").select("status, id").eq("id", sid).maybeSingle()
+      console.log("[v0] Polling attempt:", attempts + 1)
+      const { data, error } = await supabase.from("nova_sessions").select("status").eq("id", sid).maybeSingle()
 
       if (error) {
-        console.warn("⚠️ Erreur Supabase:", error.message)
+        console.log("[v0] Polling error:", error.message)
         return
       }
 
       const status = data?.status || "unknown"
-      console.log(`📊 Statut actuel de la session ${sid}:`, status)
+      console.log("[v0] Session status:", status)
       setSessionStatus(status)
 
       if (status === "paid" || status === "active" || status === "started") {
-        console.log("🚀 Session confirmée (paid/active) → lancement moteur Nova")
+        console.log("[v0] Payment confirmed, redirecting...")
         router.replace(`/session?session_id=${sid}`)
       } else if (attempts < 20) {
         attempts++
         setTimeout(checkStatus, 1500)
       } else {
-        console.warn("❌ Session toujours pending après 30s → retour dashboard")
+        console.log("[v0] Max attempts reached, redirecting to dashboard")
         router.push("/dashboard")
       }
     }

@@ -4,9 +4,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import NovaRecorder from "@/components/NovaRecorder"
 import { useRepeatIntent } from "@/hooks/useRepeatIntent"
-import MetalButton from "@/components/ui/metal-button"
+import { MetalButton } from "@/components/ui/metal-button"
 import VideoPlayer from "@/components/VideoPlayer"
-import NovaChatBox_TextOnly, { type NovaChatBoxHandle } from "./NovaChatBox_TextOnly"
+import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox_TextOnly"
 
 const isDefined = (x: any) => x !== undefined && x !== null
 
@@ -89,7 +89,7 @@ function isIdleSmileVideo(url: string | null): boolean {
 export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }) {
   const router = useRouter()
   const recordingRef = useRef<any>(null)
-  const chatRef = useRef<NovaChatBoxHandle | null>(null)
+  const chatRef = useRef<NovaChatBoxTextOnlyRef>(null)
   const playlist = useRef(new NovaPlaylistManager()).current
   const idleMgrRef = useRef<any>(null)
   const flowRef = useRef<any>(null)

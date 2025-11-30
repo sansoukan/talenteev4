@@ -427,19 +427,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   ============================================================ */
   async function handleStart() {
     console.log("[v0] handleStart called")
-
-    const v = videoRef.current
-    if (v) {
-      try {
-        v.muted = false
-        await v.play()
-        console.log("🎧 Audio unlocked immediately")
-      } catch (err) {
-        console.warn("🔇 Autoplay blocked, user needs to tap the video once:", err)
-      }
-    }
-    setIsMuted(false)
-
     playlist.reset?.()
     console.log("♻️ Playlist nettoyée avant démarrage")
     if (!session) return console.warn("⚠️ Session non chargée")
@@ -460,6 +447,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       setIsPlaying(true)
       setVideoPaused(false)
       setHasStarted(true)
+      setIsMuted(false) // Unmute video on Start Simulation
 
       await startNovaTranscription({
         sessionId,
@@ -479,6 +467,15 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           ;(window as any).__novaSpeechStart?.()
         },
       })
+
+      const v = videoRef.current
+      if (v) {
+        v.muted = false // Unmute video on Start Simulation
+        await v
+          .play()
+          .then(() => console.log("▶️ Lecture vidéo démarrée"))
+          .catch((err) => console.warn("🔇 Autoplay bloqué:", err))
+      }
     } catch (err) {
       console.error("❌ Erreur pendant le handleStart:", err)
     }
@@ -766,7 +763,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             alt="Talentee"
             className="h-8 w-auto"
           />
-          <span className="text-xs text-white/40">🚀 v2.1</span>
         </div>
         <div className="flex items-center gap-4">
           {/* Live indicator */}

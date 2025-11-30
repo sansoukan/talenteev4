@@ -1,16 +1,16 @@
-"use client";
+"use client"
 
-import { useEffect, useState, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import NovaEngine_Playlist from "@/components/NovaEngine_Playlist";
-import { getClientUser, signOutClient } from "@/lib/auth";
-import { supabase } from "@/lib/supabaseClient";
-import { novaPrices } from "@/lib/novaPrices";
-import PremiumPopup from "@/components/PremiumPopup";
-import NovaToast from "@/components/NovaToast";
+import { useEffect, useState, useMemo } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
+import NovaEngine_Playlist from "@/components/NovaEngine_Playlist"
+import { getClientUser, signOutClient } from "@/lib/auth"
+import { supabase } from "@/lib/supabaseClient"
+import { novaPrices } from "@/lib/novaPrices"
+import PremiumPopup from "@/components/PremiumPopup"
+import NovaToast from "@/components/NovaToast"
 
 /* ======================================================
- 🎯 Durée des simulations par type
+ Durée des simulations par type
 ====================================================== */
 const DURATION_MAP: Record<string, number> = {
   internship: 1200,
@@ -21,10 +21,10 @@ const DURATION_MAP: Record<string, number> = {
   goal_setting: 900,
   practice: 900,
   strategic_case: 1200,
-};
+}
 
 /* ======================================================
- 🎯 Langues supportées
+ Langues supportées
 ====================================================== */
 const SUPPORTED_LANGS = [
   { code: "en", label: "English" },
@@ -34,125 +34,113 @@ const SUPPORTED_LANGS = [
   { code: "de", label: "Deutsch" },
   { code: "zh", label: "中文" },
   { code: "ko", label: "한국어" },
-];
+]
 
 export default function SessionPage() {
-  const router = useRouter();
-  const sp = useSearchParams();
+  const router = useRouter()
+  const sp = useSearchParams()
 
-  const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<any>(null);
-  const [showPremium, setShowPremium] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [ready, setReady] = useState(false)
+  const [user, setUser] = useState<any>(null)
+  const [showPremium, setShowPremium] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  // type de simulation sélectionné
-  const [type, setType] = useState<string | null>(null);
+  const [type, setType] = useState<string | null>(null)
+  const [chosenLang, setChosenLang] = useState<string>("en")
 
-  // langue sélectionnée
-  const [chosenLang, setChosenLang] = useState<string>("en");
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [alertPlayed, setAlertPlayed] = useState(false)
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null)
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [alertPlayed, setAlertPlayed] = useState(false);
-  const [sessionStatus, setSessionStatus] = useState<string | null>(null);
+  const sid = sp.get("session_id")
+  const activeId = useMemo(() => sid || sessionId, [sid, sessionId])
 
-  const sid = sp.get("session_id");
-  const activeId = useMemo(() => sid || sessionId, [sid, sessionId]);
-
-  const durationSec = useMemo(
-    () => (type ? DURATION_MAP[type] || 1200 : 1200),
-    [type]
-  );
-  const alertDelayMs = (durationSec - 120) * 1000;
+  const durationSec = useMemo(() => (type ? DURATION_MAP[type] || 1200 : 1200), [type])
+  const alertDelayMs = (durationSec - 120) * 1000
 
   /* ======================================================
-   1️⃣ Vérifie la connexion utilisateur (VERSION STABLE)
+   1. Vérifie la connexion utilisateur
   ====================================================== */
   useEffect(() => {
-    (async () => {
-      const u = await getClientUser();
+    ;(async () => {
+      const u = await getClientUser()
       if (!u) {
-        router.replace("/auth?next=/session");
-        return;
+        router.replace("/auth?next=/session")
+        return
       }
-      setUser(u);
-      setReady(true);
-    })();
-  }, [router]);
+      setUser(u)
+      setReady(true)
+    })()
+  }, [router])
 
   /* ======================================================
-   2️⃣ Polling Stripe : pending → paid (VERSION STABLE)
+   2. Polling Stripe : pending → paid
   ====================================================== */
   useEffect(() => {
-    if (!sid) return;
+    if (!sid) return
 
-    let attempts = 0;
+    let attempts = 0
 
     const checkStatus = async () => {
-      const { data, error } = await supabase
-        .from("nova_sessions")
-        .select("status")
-        .eq("id", sid)
-        .maybeSingle();
+      const { data, error } = await supabase.from("nova_sessions").select("status").eq("id", sid).maybeSingle()
 
-      if (error) return;
+      if (error) return
 
-      const status = data?.status || "unknown";
-      setSessionStatus(status);
+      const status = data?.status || "unknown"
+      setSessionStatus(status)
 
       if (status === "paid" || status === "active" || status === "started") {
-        router.replace(`/session?session_id=${sid}`);
+        router.replace(`/session?session_id=${sid}`)
       } else if (attempts < 20) {
-        attempts++;
-        setTimeout(checkStatus, 1500);
+        attempts++
+        setTimeout(checkStatus, 1500)
       } else {
-        router.push("/dashboard");
+        router.push("/dashboard")
       }
-    };
+    }
 
-    checkStatus();
-  }, [sid, router]);
+    checkStatus()
+  }, [sid, router])
 
   /* ======================================================
-   3️⃣ Alerte vocale T-2 min
+   3. Alerte vocale T-2 min
   ====================================================== */
   useEffect(() => {
-    if (!activeId) return;
+    if (!activeId) return
 
     const timer = setTimeout(() => {
       if (!alertPlayed) {
-        const msg = new SpeechSynthesisUtterance(
-          "You have two minutes remaining."
-        );
-        msg.lang = "en-US";
-        window.speechSynthesis.speak(msg);
-        setAlertPlayed(true);
+        const msg = new SpeechSynthesisUtterance("You have two minutes remaining.")
+        msg.lang = "en-US"
+        window.speechSynthesis.speak(msg)
+        setAlertPlayed(true)
       }
-    }, alertDelayMs);
+    }, alertDelayMs)
 
-    return () => clearTimeout(timer);
-  }, [activeId, alertDelayMs, alertPlayed]);
+    return () => clearTimeout(timer)
+  }, [activeId, alertDelayMs, alertPlayed])
 
   /* ======================================================
-   4️⃣ Création de session Nova
+   4. Création de session Nova
   ====================================================== */
   async function startSimulation(selectedType: string) {
-    setLoading(true);
-    setErrorMsg(null);
+    setLoading(true)
+    setErrorMsg(null)
 
     try {
       const { data: profile } = await supabase
         .from("profiles")
         .select("id, career_stage, domain, goal")
         .eq("id", user.id)
-        .single();
+        .single()
 
       if (!profile) {
-        router.push("/onboarding");
-        return;
+        router.push("/onboarding")
+        return
       }
 
-      const duration = DURATION_MAP[selectedType] || 900;
+      const duration = DURATION_MAP[selectedType] || 900
 
       const payload = {
         user_id: profile.id,
@@ -162,100 +150,86 @@ export default function SessionPage() {
         career_stage: profile.career_stage,
         duration_limit: duration,
         chosen_lang: chosenLang,
-      };
+      }
 
       const res = await fetch("/api/engine/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      });
+      })
 
-      const json = await res.json();
+      const json = await res.json()
 
       if (json?.url) {
-        window.location.href = json.url; // Stripe Checkout
-        return;
+        window.location.href = json.url
+        return
       }
 
       if (json?.bypass || json?.mock) {
-        router.push(`/session?session_id=${json.session_id}`);
-        return;
+        router.push(`/session?session_id=${json.session_id}`)
+        return
       }
 
       if (json?.require_cv) {
-        setShowPremium(true);
-        return;
+        setShowPremium(true)
+        return
       }
 
       if (json?.error) {
-        setErrorMsg(json.error);
+        setErrorMsg(json.error)
       } else if (json?.session_id) {
-        setSessionId(json.session_id);
+        setSessionId(json.session_id)
       } else {
-        setErrorMsg("Unexpected server response.");
+        setErrorMsg("Unexpected server response.")
       }
     } catch (err) {
-      setErrorMsg("Server error, try again.");
+      setErrorMsg("Server error, try again.")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
   }
 
   /* ======================================================
-   5️⃣ Cas de garde
+   5. Cas de garde
   ====================================================== */
   if (!ready) {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
         <div className="animate-pulse text-center">
-          <h1 className="text-2xl font-semibold mb-2 text-blue-400">
-            Nova is preparing your simulation…
-          </h1>
+          <h1 className="text-2xl font-semibold mb-2 text-blue-400">Nova is preparing your simulation…</h1>
           <p className="text-gray-400 text-sm">Please wait a few seconds.</p>
         </div>
       </main>
-    );
+    )
   }
 
-  if (
-    activeId &&
-    (!activeId.match(/^[0-9a-fA-F-]{36}$/) ||
-      activeId === "[object Object]")
-  ) {
+  if (activeId && (!activeId.match(/^[0-9a-fA-F-]{36}$/) || activeId === "[object Object]")) {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-red-500">
-            Invalid session ID
-          </h1>
-          <p className="text-gray-400 text-sm mt-2">
-            Please restart your simulation.
-          </p>
+          <h1 className="text-2xl font-bold text-red-500">Invalid session ID</h1>
+          <p className="text-gray-400 text-sm mt-2">Please restart your simulation.</p>
         </div>
       </main>
-    );
+    )
   }
 
   if (sid && sessionStatus === "pending") {
     return (
       <main className="flex items-center justify-center h-screen bg-black text-white">
         <div className="animate-pulse text-center">
-          <h1 className="text-2xl font-semibold mb-2 text-blue-400">
-            Nova is preparing your session…
-          </h1>
-          <p className="text-gray-400 text-sm">
-            Please wait, payment is being confirmed.
-          </p>
+          <h1 className="text-2xl font-semibold mb-2 text-blue-400">Nova is preparing your session…</h1>
+          <p className="text-gray-400 text-sm">Please wait, payment is being confirmed.</p>
           <p className="text-gray-500 text-xs mt-4">
             Session ID: {sid} | Status: {sessionStatus}
           </p>
         </div>
       </main>
-    );
+    )
   }
 
   /* ======================================================
-   6️⃣ LANCEMENT DU MOTEUR NOVA
+   6. LANCEMENT DU MOTEUR NOVA
   ====================================================== */
   if (activeId) {
     return (
@@ -263,11 +237,11 @@ export default function SessionPage() {
         <NovaEngine_Playlist sessionId={activeId} />
         <NovaToast />
       </main>
-    );
+    )
   }
 
   /* ======================================================
-   7️⃣ PAGE DE SÉLECTION (par défaut)
+   7. PAGE DE SÉLECTION (par défaut)
   ====================================================== */
   return (
     <main className="min-h-screen bg-black text-white p-10 flex flex-col gap-8">
@@ -276,19 +250,14 @@ export default function SessionPage() {
           <h1 className="text-3xl font-bold text-blue-400">Nova Simulation</h1>
           <p className="text-gray-400 text-sm">{user?.email}</p>
         </div>
-        <button
-          onClick={signOutClient}
-          className="text-sm bg-gray-800 px-4 py-2 rounded-lg hover:bg-gray-700"
-        >
+        <button onClick={signOutClient} className="text-sm bg-gray-800 px-4 py-2 rounded-lg hover:bg-gray-700">
           Sign out
         </button>
       </div>
 
-      {/* 🌍 Choix de la langue */}
+      {/* Choix de la langue */}
       <div className="bg-gray-800/60 rounded-xl p-6 border border-white/10">
-        <p className="text-lg font-semibold mb-2 text-white">
-          Choose your interview language:
-        </p>
+        <p className="text-lg font-semibold mb-2 text-white">Choose your interview language:</p>
 
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 mt-4">
           {SUPPORTED_LANGS.map((lng) => (
@@ -319,15 +288,10 @@ export default function SessionPage() {
                 : "border-gray-700 bg-gray-900/40 hover:border-blue-400/50"
             }`}
           >
-            <strong className="capitalize block text-white text-lg">
-              {key.replace("_", " ")}
-            </strong>
-            <p className="text-gray-400 text-sm mt-2">
-              Duration: {Math.floor(dur / 60)} min
-            </p>
+            <strong className="capitalize block text-white text-lg">{key.replace("_", " ")}</strong>
+            <p className="text-gray-400 text-sm mt-2">Duration: {Math.floor(dur / 60)} min</p>
             <p className="text-blue-400 text-sm mt-1">
-              ${novaPrices.find((p) => p.id === key)?.price.toFixed(2) ||
-                "3.99"}
+              ${novaPrices.find((p) => p.id === key)?.price.toFixed(2) || "3.99"}
             </p>
           </div>
         ))}
@@ -340,19 +304,15 @@ export default function SessionPage() {
           disabled={!type || loading}
           onClick={() => startSimulation(type!)}
           className={`px-6 py-3 rounded-lg font-semibold ${
-            type
-              ? "bg-blue-600 hover:bg-blue-500 text-white"
-              : "bg-gray-600 text-gray-400 cursor-not-allowed"
+            type ? "bg-blue-600 hover:bg-blue-500 text-white" : "bg-gray-600 text-gray-400 cursor-not-allowed"
           }`}
         >
           {loading ? "Starting…" : "Start simulation"}
         </button>
       </div>
 
-      {showPremium && (
-        <PremiumPopup onClose={() => setShowPremium(false)} />
-      )}
+      {showPremium && <PremiumPopup onClose={() => setShowPremium(false)} />}
       <NovaToast />
     </main>
-  );
+  )
 }

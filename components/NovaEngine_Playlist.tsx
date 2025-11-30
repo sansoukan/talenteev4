@@ -19,13 +19,12 @@ import { startNovaTranscription, stopNovaTranscription, disableNovaTranscription
 import { NovaFlowController } from "@/lib/NovaFlowController"
 
 /* ============================================================
-   🔥 EMOTIONAL HEARTBEAT V5 — Niveau Google
+   🔥 EMOTIONAL HEARTBEAT
 ============================================================ */
 let EMO_INTERVAL: any = null
 
 function startEmotionHeartbeat(questionId: string, sessionId: string, userId: string) {
   if (EMO_INTERVAL) clearInterval(EMO_INTERVAL)
-
   EMO_INTERVAL = setInterval(() => {
     fetch("/api/emotions", {
       method: "POST",
@@ -95,6 +94,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const startTimeRef = useRef<number | null>(null)
   const pausesRef = useRef<number[]>([])
   const lastSilentAtRef = useRef<number | null>(null)
+  const hasStartedOnce = useRef(false)
 
   const [session, setSession] = useState<any>(null)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
@@ -114,7 +114,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const [showStartLoading, setShowStartLoading] = useState(false)
 
   const idleLoopStartedRef = useRef(false)
-  const hasStartedOnce = useRef(false)
 
   const responseMetrics = useRef<ResponseMetrics>({
     startTime: 0,
@@ -133,26 +132,19 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const isAudioMode = simulationMode === "audio"
   const isVideoMode = simulationMode === "video"
 
-  /* ============================================================
-     🎙️ Mic phases (listening / silence)
-  ============================================================ */
+  /* ================= MIC / LISTENING ================= */
   useEffect(() => {
     if (!hasStarted) return
-
     if (isListeningPhase && recordingRef.current) {
-      console.log("[v0] Opening microphone - listening phase started")
       recordingRef.current.startRecording()
       setMicEnabled(true)
     } else if (!isListeningPhase && recordingRef.current?.isRecording?.()) {
-      console.log("[v0] Closing microphone - listening phase ended")
       recordingRef.current.stopRecording()
       setMicEnabled(false)
     }
   }, [isListeningPhase, hasStarted])
 
-  /* ============================================================
-     📡 Chargement session + questions
-  ============================================================ */
+  /* ================= LOAD SESSION + QUESTIONS ================= */
   useEffect(() => {
     ;(async () => {
       console.log("📡 Chargement session + questions…")
@@ -163,7 +155,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
       while (attempts < 6) {
         try {
-          res = await fetch(`/api/engine/orchestrate`, {
+          res = await fetch("/api/engine/orchestrate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ session_id: sessionId }),
@@ -189,28 +181,22 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         return
       }
 
-      // CAS 1 — INIT_Q1
       if (json?.action === "INIT_Q1" && json?.question) {
         console.log("🟦 INIT_Q1 détecté → Setup minimal (FlowController FIRST)")
-
         flowRef.current = new NovaFlowController(
           sessionId,
           json.lang || "en",
           json.simulation_mode || ((json.lang || "en") === "en" ? "video" : "audio"),
           json.firstname || null,
         )
-
         flowRef.current.ctx.currentQuestion = json.question
         flowRef.current.ctx.nextQuestions = []
-
         playlist.reset?.()
-
         setSession({
           ...json,
           questions: [json.question],
           total_questions: 1,
         })
-
         setHasStarted(false)
         setIsPlaying(false)
         setVideoSrc(null)
@@ -218,9 +204,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         return
       }
 
-      // CAS 2 — Séquence complète
       const qs = json.questions || json.session?.questions || json.detail?.questions || []
-
       console.log("📊 Questions reçues:", qs.length)
 
       flowRef.current = new NovaFlowController(
@@ -229,16 +213,13 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         json.simulation_mode || ((json.lang || "en") === "en" ? "video" : "audio"),
         json.firstname || null,
       )
-
       flowRef.current.ctx.nextQuestions = [...qs]
       playlist.reset?.()
-
       setSession({
         ...json,
         questions: qs,
         total_questions: qs.length,
       })
-
       setHasStarted(false)
       setIsPlaying(false)
       setVideoSrc(null)
@@ -247,9 +228,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     })()
   }, [sessionId, playlist, router])
 
-  /* ============================================================
-     🧠 IdleManager
-  ============================================================ */
+  /* ================= IDLE MANAGER ================= */
   useEffect(() => {
     if (!session || !flowRef.current) return
 
@@ -285,12 +264,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       },
       getFollowupText: async () => lastFollowupText,
       onRelanceStart: () => {
-        console.log("[v0] IdleManager: Relance starting - closing mic")
         setIsListeningPhase(false)
         setIsSilencePhase(false)
       },
       onRelanceEnd: () => {
-        console.log("[v0] IdleManager: Relance ended - reopening mic")
         idleLoopStartedRef.current = false
         setIsListeningPhase(true)
         setIsSilencePhase(false)
@@ -300,16 +277,13 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     console.log("🧠 IdleManager_Playlist initialisé")
   }, [session, playlist, lastFollowupText])
 
-  /* ============================================================
-     🎞️ Playlist → Video src
-  ============================================================ */
+  /* ================= PLAYLIST → VIDEO SRC ================= */
   useEffect(() => {
     const handleVideoChange = (next: string | null) => {
       console.log("[v0] Playlist emitted video:", next)
       setVideoSrc(next)
 
       if (shouldEnableMic(next) && !isIdleSmileVideo(next)) {
-        console.log("[v0] Idle listen video detected - enabling mic")
         setIsListeningPhase(true)
         setIsSilencePhase(false)
         if (!idleLoopStartedRef.current) {
@@ -317,7 +291,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           idleMgrRef.current?.startLoop?.()
         }
       } else if (isIdleSmileVideo(next)) {
-        console.log("[v0] Idle smile video detected - silence phase")
         setIsSilencePhase(true)
       }
     }
@@ -325,14 +298,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     playlist.subscribe(handleVideoChange)
     console.log("[v0] Playlist subscription ready")
 
-    return () => {
-      playlist.unsubscribe(handleVideoChange)
-    }
+    return () => playlist.unsubscribe(handleVideoChange)
   }, [playlist])
 
-  /* ============================================================
-     🎥 Camera utilisateur
-  ============================================================ */
+  /* ================= CAMERA USER ================= */
   useEffect(() => {
     async function setupUserCamera() {
       try {
@@ -348,12 +317,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         console.error("❌ Could not access user camera:", err)
       }
     }
-
     setupUserCamera()
-
-    return () => {
-      userCameraStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
-    }
+    return () => userCameraStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
   }, [])
 
   useEffect(() => {
@@ -372,43 +337,32 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         console.warn("📷 Camera access denied:", err)
       }
     })()
-
-    return () => {
-      userCameraStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
-    }
+    return () => userCameraStream?.getTracks().forEach((t: MediaStreamTrack) => t.stop())
   }, [hasStarted])
 
-  /* ============================================================
-     ⌨️ Spacebar play/pause
-  ============================================================ */
+  /* ================= SPACEBAR PLAY/PAUSE ================= */
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === "Space" && hasStarted) {
         e.preventDefault()
         const v = videoRef.current
         if (!v) return
-
         if (isPlaying) {
           v.pause()
           setVideoPaused(true)
           setIsPlaying(false)
-          console.log("⏸ Pause vidéo (spacebar):", videoSrc)
         } else {
           v.play()
           setVideoPaused(false)
           setIsPlaying(true)
-          console.log("▶️ Reprise vidéo (spacebar):", videoSrc)
         }
       }
     }
-
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [hasStarted, isPlaying, videoSrc])
 
-  /* ============================================================
-     🪟 Exposition des métriques globales
-  ============================================================ */
+  /* ================= GLOBAL METRICS ================= */
   useEffect(() => {
     ;(window as any).__novaResponseMetrics = responseMetrics.current
     ;(window as any).__novaSessionId = sessionId
@@ -417,19 +371,14 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     ;(window as any).__novaFirstname = session?.profiles?.prenom || null
     ;(window as any).__novaIsTrial = session?.type_entretien === "trial"
     ;(window as any).__novaSimulationMode = simulationMode
-
-    ;(window as any).__novaSpeechStart = () => {
-      console.log("🗣️ Speech start (WS)")
-    }
+    ;(window as any).__novaSpeechStart = () => console.log("🗣️ Speech start (WS)")
     ;(window as any).__novaSilence = (metrics: any) => {
       console.log("🔇 Silence (WS)", metrics)
       idleMgrRef.current?.handleSilence()
     }
   }, [sessionId, session, simulationMode])
 
-  /* ============================================================
-     🎬 START HANDLER
-  ============================================================ */
+  /* ================= START HANDLER ================= */
   async function handleStart() {
     console.log("[v0] handleStart called")
 
@@ -446,7 +395,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       console.warn("⚠️ Session non chargée")
       return
     }
-
     if (!flowRef.current) {
       console.error("❌ FlowController non initialisé")
       return
@@ -455,10 +403,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     try {
       const intro1 = await flowRef.current.getIntro1()
       console.log("[v0] Got intro1:", intro1)
-
       playlist.add(intro1)
       console.log("[v0] Added intro1 to playlist, size:", playlist.size())
-
       console.log("🎞️ Playlist initialisée avec intro_1")
       setIsPlaying(true)
       setVideoPaused(false)
@@ -484,14 +430,11 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }
 
-  /* ============================================================
-     ⏹ Gestion onEnded
-  ============================================================ */
+  /* ================= onEnded ================= */
   const prevVideoRef = useRef<string | null>(null)
 
   const handleEnded = async () => {
     console.log("⏹ Clip terminé:", videoSrc)
-
     const currentSrc = typeof videoSrc === "string" ? videoSrc : null
     const prevSrc = prevVideoRef.current
     prevVideoRef.current = currentSrc
@@ -507,26 +450,19 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     const lang = flow.ctx.lang
 
     if (isQuestionVideo(prevSrc) && !isQuestionVideo(currentSrc)) {
-      console.log("🎤 Question video ended - starting listening phase")
       setIsListeningPhase(true)
     }
 
     if (state === "INTRO_1") {
-      console.log("[v0] INTRO_1 ended, transitioning to INTRO_2")
       const intro2 = await flow.getIntro2()
       playlist.add(intro2)
       return
     }
 
     if (state === "INTRO_2") {
-      console.log("[v0] INTRO_2 ended, transitioning to Q1")
       idleLoopStartedRef.current = false
-
       const first = await flow.fetchQ1()
-      if (!first) {
-        console.error("❌ fetchQ1() a renvoyé NULL")
-        return
-      }
+      if (!first) return
 
       if (first.type === "video") {
         playlist.add(first.url)
@@ -544,10 +480,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           q1.question_en ||
           q1.question_fr ||
           ""
-
         chatRef.current?.addMessage("nova", text)
         await playAudioQuestion(q1)
-
         const idle = await flow.getIdleListen()
         playlist.add(idle)
       }
@@ -556,20 +490,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
-    if (state === "Q1_VIDEO") {
-      console.log("🎤 Q1 video ended - adding idle and starting mic")
-      idleLoopStartedRef.current = false
-
-      const idle = await flow.getIdleListen()
-      playlist.add(idle)
-      playlist.next()
-      setIsListeningPhase(true)
-      idleMgrRef.current?.startLoop?.()
-      return
-    }
-
-    if (state === "RUN_VIDEO") {
-      console.log("🎤 Question video ended - adding idle and starting mic")
+    if (state === "Q1_VIDEO" || state === "RUN_VIDEO") {
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
@@ -581,7 +502,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     if ((window as any).__novaRepeatRequested && mode === "audio") {
       ;(window as any).__novaRepeatRequested = false
       responseMetrics.current.currentTranscript = ""
-
       const q = flow.ctx.currentQuestion
       if (q?.id) responseMetrics.current.currentQuestionId = q.id
       await playAudioQuestion(q)
@@ -594,7 +514,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     if ((window as any).__novaRepeatRequested && mode === "video") {
       ;(window as any).__novaRepeatRequested = false
       responseMetrics.current.currentTranscript = ""
-
       const q = flow.ctx.currentQuestion
       if (q?.id) responseMetrics.current.currentQuestionId = q.id
       playlist.add(videoSrc)
@@ -602,15 +521,12 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
-    if (shouldEnableMic(currentSrc)) {
-      return
-    }
+    if (shouldEnableMic(currentSrc)) return
 
     if (flow.ctx.currentQuestion && responseMetrics.current.currentTranscript) {
       const transcript = responseMetrics.current.currentTranscript || ""
       await flow.sendFeedback(transcript)
       responseMetrics.current.currentTranscript = ""
-
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
@@ -624,9 +540,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }
 
-  /* ============================================================
-     🔊 playAudioQuestion
-  ============================================================ */
+  /* ================= AUDIO QUESTION ================= */
   const playAudioQuestion = async (q: any) => {
     if ((window as any).__novaAudioLock) return
     ;(window as any).__novaAudioLock = true
@@ -635,9 +549,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }, 2000)
 
     if (!q) return
-    if (q.id) {
-      responseMetrics.current.currentQuestionId = q.id
-    }
+    if (q.id) responseMetrics.current.currentQuestionId = q.id
     const lang = session?.lang || "en"
     const text =
       q[`audio_prompt_${lang}`] || q[`text_${lang}`] || q[`question_${lang}`] || q.question_en || q.question_fr || ""
@@ -645,9 +557,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     await novaVoice.speak(text)
   }
 
-  /* ============================================================
-     💬 Chat handler
-  ============================================================ */
+  /* ================= CHAT ================= */
   const handleUserChatMessage = useCallback(async (message: string) => {
     console.log("💬 User message:", message)
     try {
@@ -658,7 +568,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         body: JSON.stringify({ userMessage: message, lastQuestion }),
       })
       const data = await res.json()
-      console.log("🧠 Nova response:", data)
       chatRef.current?.addMessage("nova", data.reply || "I'm here to help!")
     } catch (err) {
       console.error("❌ nova-chat error:", err)
@@ -666,27 +575,20 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }, [])
 
-  /* ============================================================
-     ⏹ Fin de session
-  ============================================================ */
+  /* ================= SESSION END ================= */
   const handleSessionEnd = async () => {
     console.log("⏹ Fin de session par timer")
-
     stopEmotionHeartbeat()
     setIsListeningPhase(false)
-
     try {
       stopNovaTranscription()
     } catch {}
-
     disableNovaTranscription()
     setMicEnabled(false)
-
     playlist.reset?.()
     setIsPlaying(false)
     setHasStarted(false)
     videoRef.current?.pause()
-
     idleMgrRef.current?.showEndScreen?.()
 
     await fetch("/api/session/end", {
@@ -707,12 +609,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const handleFinalFeedback = async () => {
     console.log("🎯 Génération du feedback final...")
     setShowPreparingOverlay(true)
-
     try {
-      if (flowRef.current) {
-        await flowRef.current.endSession()
-      }
-
+      if (flowRef.current) await flowRef.current.endSession()
       setTimeout(() => {
         router.push(`/interview/${sessionId}/results`)
       }, 1500)
@@ -722,21 +620,14 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }
 
-  /* ============================================================
-     🎙️ Callbacks NovaRecorder
-  ============================================================ */
+  /* ================= RECORDER CALLBACKS ================= */
   const handleUserSpeaking = useCallback(() => {
-    console.log("[v0] User speaking detected")
     idleMgrRef.current?.onUserSpeaking?.()
-    if (isSilencePhase) {
-      setIsSilencePhase(false)
-    }
+    if (isSilencePhase) setIsSilencePhase(false)
   }, [isSilencePhase])
 
   const handleSilenceStart = useCallback(async () => {
-    console.log("[v0] Silence detection started - switching to idle_smile")
     setIsSilencePhase(true)
-
     if (flowRef.current) {
       const smile = await getSystemVideo("idle_smile", session?.lang || "en")
       playlist.add(smile)
@@ -744,7 +635,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [session, playlist])
 
   const handleSilenceConfirmed = useCallback((metrics: any) => {
-    console.log("[v0] 5s silence confirmed - triggering relance")
     setIsListeningPhase(false)
     idleMgrRef.current?.handleSilence?.()
   }, [])
@@ -755,9 +645,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     idleMgrRef.current?.onUserSpeaking?.()
   }, [])
 
-  /* ============================================================
-     🧩 RENDER
-  ============================================================ */
+  /* ================= RENDER ================= */
   return (
     <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col antialiased">
       <header className="h-14 bg-black/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6">
@@ -779,7 +667,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       </header>
 
       <div className="flex-1 flex gap-4 p-4 overflow-hidden items-stretch">
-        {/* VIDEO */}
+        {/* VIDEO AREA */}
         <div
           className="flex-1 relative bg-zinc-900/50 rounded-3xl overflow-hidden border border-white/10"
           onMouseEnter={() => setUserCameraHovered(true)}
@@ -789,24 +677,18 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             <VideoPlayer
               ref={videoRef}
               src={videoSrc}
-              autoPlay={!isMuted}
+              autoPlay
               muted={isMuted}
               playsInline
               onPlay={() => {
                 console.log("Lecture en cours:", videoSrc)
                 setIsPlaying(true)
-
                 const src = typeof videoSrc === "string" ? videoSrc : ""
-
                 if (isAudioMode && !(window as any).__novaAudioLock) {
                   const q = flowRef.current?.ctx?.currentQuestion
                   if (q) playAudioQuestion(q)
                 }
-
-                if (shouldEnableMic(src)) {
-                  setMicEnabled(true)
-                }
-
+                if (shouldEnableMic(src)) setMicEnabled(true)
                 const q = flowRef.current?.ctx?.currentQuestion
                 if (q && isQuestionVideo(src)) {
                   const lang = session?.lang || "en"
@@ -815,14 +697,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                   const questionKey = `question_${lang}`
                   const questionText =
                     q[promptKey] || q[textKey] || q[questionKey] || q.question_en || q.question_fr || ""
-
                   if (questionText && chatRef.current) {
                     chatRef.current.addMessage("nova", questionText)
                   }
-
-                  if (isAudioMode) {
-                    playAudioQuestion(q)
-                  }
+                  if (isAudioMode) playAudioQuestion(q)
                 }
               }}
               onPause={() => console.log("Pause detectee:", videoSrc)}
@@ -838,20 +716,17 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           {!hasStarted && playlistReady && (
             <div className="absolute inset-0 flex items-center justify-center z-30 bg-black/60 backdrop-blur-sm">
               <MetalButton
+                variant="primary"
+                size="lg"
+                className="px-10 py-4 text-lg"
+                disabled={showStartLoading}
                 onClick={async () => {
                   console.log("Start Simulation clicked")
                   setShowStartLoading(true)
-
-                  // Laisse 1s pour l'effet "Nova génère la vidéo"
                   await new Promise((res) => setTimeout(res, 1000))
-
                   await handleStart()
-
                   setShowStartLoading(false)
                 }}
-                variant="primary"
-                size="lg"
-                className="text-lg px-10 py-4"
               >
                 Start Simulation
               </MetalButton>
@@ -864,7 +739,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               e.stopPropagation()
               const v = videoRef.current
               if (!v) return
-
               if (isPlaying) {
                 v.pause()
                 setVideoPaused(true)
@@ -892,9 +766,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               >
                 <video
                   ref={(el) => {
-                    if (el && userCameraStream) {
-                      el.srcObject = userCameraStream
-                    }
+                    if (el && userCameraStream) el.srcObject = userCameraStream
                   }}
                   autoPlay
                   muted
@@ -935,7 +807,12 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex overflow-hidden">
           <div className="h-14 px-5 flex items-center gap-3 border-b border-white/10 bg-zinc-800/50">
             <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+              />
             </svg>
             <h2 className="font-semibold text-white tracking-wide">Nova Chat</h2>
           </div>

@@ -61,11 +61,43 @@ export default function SessionPage() {
 
   /* ======================================================
    1. Vérifie la connexion utilisateur
-   Restored simple auth check using getClientUser
+   Stripe-safe auth: wait and retry when returning from Stripe
   ====================================================== */
   useEffect(() => {
     ;(async () => {
       console.log("[v0] Checking user authentication...")
+      console.log("[v0] session_id from URL:", sid)
+
+      if (sid) {
+        console.log("[v0] Returning from Stripe, waiting 1.2s before auth check...")
+        await new Promise((resolve) => setTimeout(resolve, 1200))
+
+        // Retry loop pour attendre que Supabase Auth se resynchronise
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          console.log(`[v0] Auth attempt ${attempt}/5...`)
+
+          const {
+            data: { session },
+            error,
+          } = await supabase.auth.getSession()
+
+          if (session?.user) {
+            console.log("[v0] User found after Stripe return:", session.user.email)
+            setUser(session.user)
+            setReady(true)
+            return
+          }
+
+          console.log(`[v0] Attempt ${attempt} - no session yet, waiting 1s...`)
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+        }
+
+        // Si après 5 tentatives toujours pas d'utilisateur
+        console.log("[v0] No user after 5 attempts, redirecting to /auth")
+        router.replace("/auth?next=/session")
+        return
+      }
+
       const u = await getClientUser()
       console.log("[v0] User result:", u ? u.email : "no user found")
       if (!u) {
@@ -77,7 +109,7 @@ export default function SessionPage() {
       setReady(true)
       console.log("[v0] User authenticated, ready=true")
     })()
-  }, [router])
+  }, [router, sid])
 
   /* ======================================================
    2. Polling Stripe : pending → paid

@@ -7,7 +7,6 @@ import { useRepeatIntent } from "@/hooks/useRepeatIntent"
 import { MetalButton } from "@/components/ui/metal-button"
 import VideoPlayer from "@/components/VideoPlayer"
 import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox_TextOnly"
-import { Volume2, VolumeX } from "lucide-react"
 
 const isDefined = (x: any) => x !== undefined && x !== null
 
@@ -116,7 +115,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const [micEnabled, setMicEnabled] = useState(false)
   const [isListeningPhase, setIsListeningPhase] = useState(false)
   const [isSilencePhase, setIsSilencePhase] = useState(false)
-  const [isMuted, setIsMuted] = useState(true) // Add isMuted state - starts muted, unmutes on Start Simulation
   const idleLoopStartedRef = useRef(false)
 
   const responseMetrics = useRef<ResponseMetrics>({
@@ -447,7 +445,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       setIsPlaying(true)
       setVideoPaused(false)
       setHasStarted(true)
-      setIsMuted(false) // Unmute video on Start Simulation
 
       await startNovaTranscription({
         sessionId,
@@ -470,7 +467,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
       const v = videoRef.current
       if (v) {
-        v.muted = false // Unmute video on Start Simulation
+        v.muted = true
         await v
           .play()
           .then(() => console.log("▶️ Lecture vidéo démarrée"))
@@ -755,7 +752,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [])
 
   return (
-    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col antialiased">
+    <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col font-sans antialiased">
       <header className="h-14 bg-black/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
           <img
@@ -776,10 +773,10 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       </header>
 
       {/* Main content area */}
-      <div className="flex-1 flex gap-4 p-4 overflow-hidden items-stretch">
+      <div className="flex-1 flex gap-4 p-4 overflow-hidden">
         {/* Video area - takes all available space */}
         <div
-          className="flex-1 relative bg-zinc-900/50 rounded-3xl overflow-hidden border border-white/10"
+          className="flex-1 relative bg-zinc-900/50 rounded-2xl overflow-hidden border border-white/10"
           onMouseEnter={() => setUserCameraHovered(true)}
           onMouseLeave={() => setUserCameraHovered(false)}
         >
@@ -788,8 +785,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             <VideoPlayer
               ref={videoRef}
               src={videoSrc}
-              autoPlay={!isMuted}
-              muted={isMuted}
+              autoPlay
+              muted
               playsInline
               onPlay={() => {
                 console.log("Lecture en cours:", videoSrc)
@@ -840,7 +837,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                 variant="primary"
                 onClick={async () => {
                   console.log("Bouton START clique!")
-                  setIsMuted(false) // Unmute video when starting simulation
                   await handleStart()
                 }}
               >
@@ -913,20 +909,9 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               onSilenceStart={handleSilenceStart}
             />
           </div>
-
-          {/* Volume toggle button - Apple style */}
-          {hasStarted && (
-            <button
-              onClick={() => setIsMuted(!isMuted)}
-              className="absolute bottom-6 left-6 w-10 h-10 rounded-full bg-black/50 backdrop-blur-md border border-white/20 flex items-center justify-center text-white/80 hover:text-white hover:bg-black/70 transition-all duration-200"
-              title={isMuted ? "Unmute" : "Mute"}
-            >
-              {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
-            </button>
-          )}
         </div>
 
-        <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex overflow-hidden">
+        <aside className="w-80 lg:w-96 bg-zinc-900/80 backdrop-blur-xl rounded-2xl border border-white/15 flex flex-col overflow-hidden">
           <div className="h-14 px-5 flex items-center gap-3 border-b border-white/10 bg-zinc-800/50">
             <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import NovaRecorder from "@/components/NovaRecorder"
 import { useRepeatIntent } from "@/hooks/useRepeatIntent"
 import MetalButton from "@/components/ui/metal-button"
-import NovaVideoPlayer from "@/components/NovaVideoPlayer"
+import VideoPlayer from "@/components/VideoPlayer"
+import NovaChatBox_TextOnly, { type NovaChatBoxHandle } from "./NovaChatBox_TextOnly"
 
 const isDefined = (x: any) => x !== undefined && x !== null
 
@@ -15,7 +16,6 @@ import { NOVA_SESSION_CONFIG } from "@/config/novaSessionConfig"
 import NovaTimer from "@/components/NovaTimer"
 import { NovaPlaylistManager } from "@/lib/NovaPlaylistManager"
 import { NovaIdleManager_Playlist } from "@/lib/NovaIdleManager_Playlist"
-import NovaChatBox_TextOnly from "@/components/NovaChatBox_TextOnly"
 import { startNovaTranscription, stopNovaTranscription, disableNovaTranscription } from "@/lib/voice-utils"
 import { NovaFlowController } from "@/lib/NovaFlowController"
 
@@ -89,7 +89,7 @@ function isIdleSmileVideo(url: string | null): boolean {
 export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }) {
   const router = useRouter()
   const recordingRef = useRef<any>(null)
-  const chatRef = useRef<any>(null)
+  const chatRef = useRef<NovaChatBoxHandle | null>(null)
   const playlist = useRef(new NovaPlaylistManager()).current
   const idleMgrRef = useRef<any>(null)
   const flowRef = useRef<any>(null)
@@ -782,7 +782,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         >
           {/* Video player - full size */}
           {videoSrc ? (
-            <NovaVideoPlayer
+            <VideoPlayer
               ref={videoRef}
               src={videoSrc}
               autoPlay

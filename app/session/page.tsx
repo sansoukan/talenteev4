@@ -10,7 +10,7 @@ import PremiumPopup from "@/components/PremiumPopup"
 import NovaToast from "@/components/NovaToast"
 
 /* ======================================================
- 🎯 Durée des simulations par type
+ Durée des simulations par type
 ====================================================== */
 const DURATION_MAP: Record<string, number> = {
   internship: 1200,
@@ -24,7 +24,7 @@ const DURATION_MAP: Record<string, number> = {
 }
 
 /* ======================================================
- 🎯 Langues supportées
+ Langues supportées
 ====================================================== */
 const SUPPORTED_LANGS = [
   { code: "en", label: "English" },
@@ -46,10 +46,7 @@ export default function SessionPage() {
   const [loading, setLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
 
-  /* ancien: type */
   const [type, setType] = useState<string | null>(null)
-
-  /* ⬅ NOUVEAU : langue */
   const [chosenLang, setChosenLang] = useState<string>("en")
 
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -63,82 +60,54 @@ export default function SessionPage() {
   const alertDelayMs = (durationSec - 120) * 1000
 
   /* ======================================================
-   1️⃣ Vérifie la connexion utilisateur
+   1. Vérifie la connexion utilisateur
+   Si on a un session_id de Stripe, on ne redirige pas vers /auth
   ====================================================== */
   useEffect(() => {
     ;(async () => {
+      console.log("🔑 Vérification de la session utilisateur...")
       const u = await getClientUser()
       if (!u) {
+        console.warn("🚫 Aucun utilisateur connecté → redirection /auth")
         router.replace("/auth?next=/session")
         return
       }
+      console.log("✅ Utilisateur connecté:", u.id)
       setUser(u)
       setReady(true)
     })()
   }, [router])
 
   /* ======================================================
-   2️⃣ Polling Stripe : pending → paid
+   2. Polling Stripe : pending → paid
   ====================================================== */
   useEffect(() => {
     if (!sid) return
 
+    console.log("🎯 Début du polling Stripe pour session:", sid)
     let attempts = 0
-    let stripeVerifyAttempted = false
 
     const checkStatus = async () => {
-      // 1️⃣ Vérifier le status dans Supabase
-      const { data, error } = await supabase.from("nova_sessions").select("status").eq("id", sid).maybeSingle()
+      console.log(`🔄 Vérification #${attempts + 1} du statut pour ${sid}...`)
+      const { data, error } = await supabase.from("nova_sessions").select("status, id").eq("id", sid).maybeSingle()
 
       if (error) {
-        console.error("[v0] Error fetching session status:", error)
+        console.warn("⚠️ Erreur Supabase:", error.message)
         return
       }
 
       const status = data?.status || "unknown"
+      console.log(`📊 Statut actuel de la session ${sid}:`, status)
       setSessionStatus(status)
 
-      console.log(`[v0] Session status check #${attempts + 1}: ${status}`)
-
-      // 2️⃣ Si payé/actif → lancer la simulation
       if (status === "paid" || status === "active" || status === "started") {
-        console.log("[v0] Session is active, starting simulation")
+        console.log("🚀 Session confirmée (paid/active) → lancement moteur Nova")
         router.replace(`/session?session_id=${sid}`)
-        return
-      }
-
-      // 3️⃣ Si pending après quelques tentatives → vérifier directement Stripe
-      if (status === "pending" && attempts >= 3 && !stripeVerifyAttempted) {
-        console.log("[v0] Status still pending, verifying payment with Stripe...")
-        stripeVerifyAttempted = true
-
-        try {
-          const verifyRes = await fetch("/api/stripe/verify-payment", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: sid }),
-          })
-
-          const verifyData = await verifyRes.json()
-          console.log("[v0] Stripe verify response:", verifyData)
-
-          if (verifyData.verified && verifyData.status === "started") {
-            console.log("[v0] Payment verified by Stripe, redirecting...")
-            setSessionStatus("started")
-            router.replace(`/session?session_id=${sid}`)
-            return
-          }
-        } catch (verifyErr) {
-          console.error("[v0] Stripe verify error:", verifyErr)
-        }
-      }
-
-      // 4️⃣ Continuer le polling ou abandonner
-      if (attempts < 30) {
+      } else if (attempts < 20) {
         attempts++
         setTimeout(checkStatus, 1500)
       } else {
-        console.log("[v0] Max attempts reached, redirecting to dashboard")
+        console.warn("❌ Session toujours pending après 30s → retour dashboard")
         router.push("/dashboard")
       }
     }
@@ -147,7 +116,7 @@ export default function SessionPage() {
   }, [sid, router])
 
   /* ======================================================
-   3️⃣ Alerte vocale T-2 min
+   3. Alerte vocale T-2 min
   ====================================================== */
   useEffect(() => {
     if (!activeId) return
@@ -165,7 +134,7 @@ export default function SessionPage() {
   }, [activeId, alertDelayMs, alertPlayed])
 
   /* ======================================================
-   4️⃣ Création de session Nova
+   4. Création de session Nova
   ====================================================== */
   async function startSimulation(selectedType: string) {
     setLoading(true)
@@ -192,8 +161,6 @@ export default function SessionPage() {
         goal: profile.goal,
         career_stage: profile.career_stage,
         duration_limit: duration,
-
-        /* ⬅ AJOUT CHOIX LANGUE */
         chosen_lang: chosenLang,
       }
 
@@ -206,7 +173,7 @@ export default function SessionPage() {
       const json = await res.json()
 
       if (json?.url) {
-        window.location.href = json.url // Stripe Checkout
+        window.location.href = json.url
         return
       }
 
@@ -235,7 +202,7 @@ export default function SessionPage() {
   }
 
   /* ======================================================
-   5️⃣ Cas de garde
+   5. Cas de garde
   ====================================================== */
   if (!ready) {
     return (
@@ -274,7 +241,7 @@ export default function SessionPage() {
   }
 
   /* ======================================================
-   6️⃣ LANCEMENT DU MOTEUR NOVA
+   6. LANCEMENT DU MOTEUR NOVA
   ====================================================== */
   if (activeId) {
     return (
@@ -286,7 +253,7 @@ export default function SessionPage() {
   }
 
   /* ======================================================
-   7️⃣ PAGE DE SÉLECTION (par défaut)
+   7. PAGE DE SÉLECTION (par défaut)
   ====================================================== */
   return (
     <main className="min-h-screen bg-black text-white p-10 flex flex-col gap-8">
@@ -300,7 +267,7 @@ export default function SessionPage() {
         </button>
       </div>
 
-      {/* 🌍 Choix de la langue */}
+      {/* Choix de la langue */}
       <div className="bg-gray-800/60 rounded-xl p-6 border border-white/10">
         <p className="text-lg font-semibold mb-2 text-white">Choose your interview language:</p>
 

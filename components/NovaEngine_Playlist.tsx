@@ -777,7 +777,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             alt="Talentee"
             className="h-8 w-auto"
           />
-          <span className="text-xs text-white/40">🚀 v2.2</span>
+          <span className="text-xs text-white/40">🚀 v2.3</span>
         </div>
         <div className="flex items-center gap-4">
           {/* Live indicator */}

@@ -65,16 +65,34 @@ interface ResponseMetrics {
 
 function isQuestionVideo(url: string | null): boolean {
   if (!url) return false
-  // Question videos contain q_ or question in their path
-  // Exclude intro, idle, clarify, end videos
-  const isIdle = url.includes("idle_") || url.includes("listen") || url.includes("smile")
-  const isIntro = url.includes("intro_")
-  const isClarify = url.includes("clarify")
-  const isEnd = url.includes("end_") || url.includes("nova_end")
-  const isSystem = isIdle || isIntro || isClarify || isEnd
 
-  // If it's not a system video, it's likely a question video
-  return !isSystem
+  // --- Si le nom du fichier commence par q_ → question vidéo
+  const isQ = url.includes("/q_")
+
+  // --- Définition exacte des noms systèmes présents sur Supabase
+  const SYSTEM_FILES = [
+    "clarify_end.mp4",
+    "clarify_end (1).mp4",
+    "clarify_start.mp4",
+    "idle_listen.mp4",
+    "idle_smile.mp4",
+    "intro_en_1.mp4",
+    "intro_en_2.mp4",
+    "listen_idle_01.mp4",
+    "nova_end_interview.mp4",
+    "nova_end_interview_en.mp4",
+    "nova_feedback_final.mp4",
+    "question_missing.mp4",
+    "thankyou.mp4",
+  ]
+
+  // --- Si l'URL contient un fichier système → ce n'est PAS une question
+  const isSystem = SYSTEM_FILES.some((name) => url.includes(name))
+
+  // --- Une vidéo de question doit :
+  //     1. contenir q_
+  //     2. ne pas être un système
+  return isQ && !isSystem
 }
 
 function shouldEnableMic(url: string | null): boolean {
@@ -759,7 +777,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             alt="Talentee"
             className="h-8 w-auto"
           />
-          <span className="text-xs text-white/40">🚀 v2.1</span>
+          <span className="text-xs text-white/40">🚀 v2.2</span>
         </div>
         <div className="flex items-center gap-4">
           {/* Live indicator */}

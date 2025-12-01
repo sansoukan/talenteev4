@@ -499,21 +499,24 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     const mode = flow.ctx.mode
     const lang = flow.ctx.lang
 
-    // INTRO 1 → INTRO 2
+    /* ---------------------------------------------------------
+       INTRO 1 → INTRO 2
+    --------------------------------------------------------- */
     if (state === "INTRO_1") {
-      console.log("[v0] INTRO_1 ended, transitioning to INTRO_2")
+      console.log("[v0] INTRO_1 → INTRO_2")
       const intro2 = await flow.getIntro2()
       playlist.add(intro2)
+      playlist.next()
       return
     }
 
-    // INTRO 2 → Q1
+    /* ---------------------------------------------------------
+       INTRO 2 → Q1
+    --------------------------------------------------------- */
     if (state === "INTRO_2") {
-      console.log("[v0] INTRO_2 ended, transitioning to Q1")
-      idleLoopStartedRef.current = false
+      console.log("[v0] INTRO_2 → Q1")
 
       const first = await flow.fetchQ1()
-
       if (!first) {
         console.error("❌ fetchQ1() a renvoyé NULL")
         return
@@ -525,19 +528,19 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           responseMetrics.current.currentQuestionId = flow.ctx.currentQuestion.id
         }
       } else if (first.type === "audio") {
-        const q1 = first.question
-        responseMetrics.current.currentQuestionId = q1.id
+        const q = first.question
+        responseMetrics.current.currentQuestionId = q.id
 
         const text =
-          q1[`audio_prompt_${lang}`] ||
-          q1[`text_${lang}`] ||
-          q1[`question_${lang}`] ||
-          q1.question_en ||
-          q1.question_fr ||
+          q[`audio_prompt_${lang}`] ||
+          q[`text_${lang}`] ||
+          q[`question_${lang}`] ||
+          q.question_en ||
+          q.question_fr ||
           ""
 
         chatRef.current?.addMessage("nova", text)
-        await playAudioQuestion(q1)
+        await playAudioQuestion(q)
 
         const idle = await flow.getIdleListen()
         playlist.add(idle)
@@ -547,29 +550,23 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
-    if (state === "Q1_VIDEO") {
-      console.log("🎤 Q1 video ended - adding idle and starting mic")
-      idleLoopStartedRef.current = false
-
+    /* ---------------------------------------------------------
+       Q1_VIDEO or RUN_VIDEO → Idle Listen
+    --------------------------------------------------------- */
+    if (state === "Q1_VIDEO" || state === "RUN_VIDEO") {
+      console.log("🎤 Question finished → Idle listen")
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
+
       setIsListeningPhase(true)
       idleMgrRef.current?.startLoop?.()
       return
     }
 
-    if (state === "RUN_VIDEO") {
-      console.log("🎤 Question video ended - adding idle and starting mic")
-      const idle = await flow.getIdleListen()
-      playlist.add(idle)
-      playlist.next()
-      setIsListeningPhase(true)
-      idleMgrRef.current?.startLoop?.()
-      return
-    }
-
-    // REPEAT (audio)
+    /* ---------------------------------------------------------
+       REPEAT for AUDIO MODE
+    --------------------------------------------------------- */
     if ((window as any).__novaRepeatRequested && mode === "audio") {
       ;(window as any).__novaRepeatRequested = false
       responseMetrics.current.currentTranscript = ""
@@ -578,14 +575,18 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       if (q?.id) {
         responseMetrics.current.currentQuestionId = q.id
       }
+
       await playAudioQuestion(q)
+
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
       return
     }
 
-    // REPEAT (video)
+    /* ---------------------------------------------------------
+       REPEAT for VIDEO MODE
+    --------------------------------------------------------- */
     if ((window as any).__novaRepeatRequested && mode === "video") {
       ;(window as any).__novaRepeatRequested = false
       responseMetrics.current.currentTranscript = ""
@@ -594,17 +595,15 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       if (q?.id) {
         responseMetrics.current.currentQuestionId = q.id
       }
+
       playlist.add(videoSrc)
       playlist.next()
       return
     }
 
-    if (shouldEnableMic(currentSrc)) {
-      // Already in listening phase, idle manager handles the loop
-      return
-    }
-
-    // FIN QUESTION → FEEDBACK (only if we have a transcript)
+    /* ---------------------------------------------------------
+       FEEDBACK if transcript exists
+    --------------------------------------------------------- */
     if (flow.ctx.currentQuestion && responseMetrics.current.currentTranscript) {
       const transcript = responseMetrics.current.currentTranscript || ""
       await flow.sendFeedback(transcript)
@@ -616,7 +615,11 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
-    // Fallback — playlist vide
+    /* ---------------------------------------------------------
+       FALLBACK — prevent getting stuck
+    --------------------------------------------------------- */
+    console.log("⚠️ handleEnded fallback reached")
+
     if (playlist.size() === 0) {
       const idle = await flow.getIdleListen()
       playlist.add(idle)
@@ -936,7 +939,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           )}
         </div>
 
-        <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex overflow-hidden">
+        <aside className="w-80 lg:w-96 h-full bg-zinc-900/80 backdrop-blur-xl rounded-3xl border border-white/15 flex flex-col overflow-hidden">
           <div className="h-14 px-5 flex items-center gap-3 border-b border-white/10 bg-zinc-800/50">
             <svg className="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path

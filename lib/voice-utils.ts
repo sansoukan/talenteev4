@@ -1,34 +1,58 @@
-// lib/voice-utils.ts
 // ===============================================================
-//  Nova Voice Utils — Dedicated WebSocket STT (CTO V4)
+//  Nova Voice Utils — Dedicated WebSocket STT (CTO V4.2 FINAL)
 // ===============================================================
 //
 //  ✔ Compatible Ngrok, Render, Vercel
 //  ✔ Zero conflict with Next.js
-//  ✔ Same API you already use (onTranscript, onSilence, onSpeaking)
-//  ✔ Just change WS_URL → REAL STT server (not Next.js)
+//  ✔ Micro intelligent : ON/OFF contrôlé depuis NovaEngine
+//  ✔ Évite les "Silence initial — patience"
+//  ✔ Reconnexion seulement si micro actif
+//  ✔ API identique : startNovaTranscription(), stopNovaTranscription()
 // ===============================================================
 
-let STT_WS: WebSocket | null = null;
-let TRANSCRIPTION_ENABLED = false;
+let STT_WS: WebSocket | null = null
+let TRANSCRIPTION_ENABLED = false
+let MIC_ENABLED = false
 
 /* ---------------------------------------------------------------
-   Disable transcription (cleanup)
+   🔵 DEBUG LOGS PREFIX
 ---------------------------------------------------------------- */
-export function disableNovaTranscription() {
-  TRANSCRIPTION_ENABLED = false;
-
-  if (STT_WS) {
-    try {
-      STT_WS.close();
-    } catch {}
-  }
-
-  STT_WS = null;
+function log(...args: any[]) {
+  console.log("🎧 [NovaVoice]", ...args)
 }
 
 /* ---------------------------------------------------------------
-   Start realtime STT (MAIN FUNCTION)
+   🎚 MICRO CONTROL — Called from NovaEngine
+---------------------------------------------------------------- */
+export function novaEnableMic() {
+  log("🎤 Micro ENABLED")
+  MIC_ENABLED = true
+}
+
+export function novaDisableMic() {
+  log("🔇 Micro DISABLED")
+  MIC_ENABLED = false
+}
+
+/* ---------------------------------------------------------------
+   🔴 CLEANUP — Stop + close STT
+---------------------------------------------------------------- */
+export function disableNovaTranscription() {
+  TRANSCRIPTION_ENABLED = false
+  MIC_ENABLED = false
+
+  if (STT_WS) {
+    try {
+      STT_WS.close()
+      log("🧹 STT WebSocket closed")
+    } catch {}
+  }
+
+  STT_WS = null
+}
+
+/* ---------------------------------------------------------------
+   🚀 START REALTIME STT
 ---------------------------------------------------------------- */
 export async function startNovaTranscription({
   sessionId,
@@ -37,84 +61,95 @@ export async function startNovaTranscription({
   onSilence,
   onSpeaking,
 }: {
-  sessionId: string;
-  userId: string;
-  onTranscript: (t: string) => void;
-  onSilence: (m: any) => void;
-  onSpeaking: () => void;
+  sessionId: string
+  userId: string
+  onTranscript: (t: string) => void
+  onSilence: (m: any) => void
+  onSpeaking: () => void
 }) {
-  disableNovaTranscription();
-  TRANSCRIPTION_ENABLED = true;
+  disableNovaTranscription()
+  TRANSCRIPTION_ENABLED = true
 
-  /* -------------------------------------------
-     1. USE DEDICATED STT WS SERVER
-  -------------------------------------------- */
-  const WS_BASE = process.env.NEXT_PUBLIC_STT_WS_URL;
-
+  const WS_BASE = process.env.NEXT_PUBLIC_STT_WS_URL
   if (!WS_BASE) {
-    console.error("❌ ERROR: NEXT_PUBLIC_STT_WS_URL not set");
-    return;
+    log("❌ ERROR: NEXT_PUBLIC_STT_WS_URL is missing")
+    return
   }
 
-  const WS_URL = `${WS_BASE}?session_id=${sessionId}&user_id=${userId}`;
+  const WS_URL = `${WS_BASE}?session_id=${sessionId}&user_id=${userId}`
+  log("🔵 Connecting STT WebSocket:", WS_URL)
 
-  console.log("🔵 Connecting STT WebSocket:", WS_URL);
-
-  /* -------------------------------------------
-     2. CONNECT
-  -------------------------------------------- */
   try {
-    STT_WS = new WebSocket(WS_URL);
-  } catch (e) {
-    console.error("❌ Cannot create WebSocket:", e);
-    return;
+    STT_WS = new WebSocket(WS_URL)
+  } catch (err) {
+    log("❌ Cannot create WebSocket:", err)
+    return
   }
 
-  /* -------------------------------------------
-     3. EVENTS
-  -------------------------------------------- */
+  /* ---------------------------------------------------------------
+     🌐 CONNECTION EVENTS
+  ---------------------------------------------------------------- */
   STT_WS.onopen = () => {
-    console.log("🔵 STT WebSocket connected");
-  };
+    log("🟢 STT WebSocket connected")
+  }
 
   STT_WS.onerror = (err) => {
-    console.error("❌ STT WebSocket error:", err);
-  };
+    log("❌ STT WebSocket error:", err)
+  }
 
   STT_WS.onclose = () => {
-    console.warn("🔵 STT WebSocket closed");
-  };
+    log("🔵 STT WebSocket closed")
 
+    // ONLY reconnect if STT is enabled AND mic should be listening
+    if (TRANSCRIPTION_ENABLED && MIC_ENABLED) {
+      log("⏳ Reconnecting (mic ON)…")
+      setTimeout(() => {
+        startNovaTranscription({ sessionId, userId, onTranscript, onSilence, onSpeaking })
+      }, 600)
+    } else {
+      log("⛔ No reconnection (mic OFF)")
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     📨 MESSAGE HANDLER
+  ---------------------------------------------------------------- */
   STT_WS.onmessage = (event) => {
-    let msg: any = null;
+    let msg: any = null
 
     try {
-      msg = JSON.parse(event.data);
+      msg = JSON.parse(event.data)
     } catch {
-      console.warn("⚠️ Could not parse STT message:", event.data);
-      return;
+      log("⚠️ Cannot parse STT frame:", event.data)
+      return
     }
 
-    // Speaking detection
+    // If mic is OFF, ignore everything
+    if (!MIC_ENABLED) {
+      log("⏭️ Ignored STT frame (mic off)", msg.type)
+      return
+    }
+
+    // Detect user speaking
     if (msg.type === "input_audio_buffer.append") {
-      onSpeaking();
+      onSpeaking()
     }
 
     // Incremental text
-    if (msg.type === "response.output_text.delta") {
-      if (msg.text) onTranscript(msg.text);
+    if (msg.type === "response.output_text.delta" && msg.text) {
+      onTranscript(msg.text)
     }
 
-    // Silence detected → Completed
+    // Finalization (silence)
     if (msg.type === "response.completed") {
-      if (msg.metrics) onSilence(msg.metrics);
+      onSilence(msg.metrics || {})
     }
-  };
+  }
 }
 
 /* ---------------------------------------------------------------
-   Stop transcription
+   🛑 STOP STT (called end of session)
 ---------------------------------------------------------------- */
 export function stopNovaTranscription() {
-  disableNovaTranscription();
+  disableNovaTranscription()
 }

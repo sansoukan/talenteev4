@@ -1,5 +1,6 @@
-// TEST_REDA_123
 "use client"
+
+import type React from "react"
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
@@ -11,14 +12,18 @@ import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox
 import { Volume2, VolumeX } from "lucide-react"
 
 const isDefined = (x: any) => x !== undefined && x !== null
-
-import { getSystemVideo } from "@/lib/videoManager"
 import { useNovaRealtimeVoice } from "@/hooks/useNovaRealtimeVoice"
 import { NOVA_SESSION_CONFIG } from "@/config/novaSessionConfig"
 import NovaTimer from "@/components/NovaTimer"
 import { NovaPlaylistManager } from "@/lib/NovaPlaylistManager"
 import { NovaIdleManager_Playlist } from "@/lib/NovaIdleManager_Playlist"
-import { startNovaTranscription, stopNovaTranscription, disableNovaTranscription } from "@/lib/voice-utils"
+import {
+  startNovaTranscription,
+  stopNovaTranscription,
+  disableNovaTranscription,
+  novaEnableMic,
+  novaDisableMic,
+} from "@/lib/voice-utils"
 import { NovaFlowController } from "@/lib/NovaFlowController"
 
 /* ============================================================
@@ -67,32 +72,26 @@ interface ResponseMetrics {
 function isQuestionVideo(url: string | null): boolean {
   if (!url) return false
 
-  // --- Si le nom du fichier commence par q_ → question vidéo
-  const isQ = url.includes("q_")
+  const isQ = /\/q_[0-9]+/i.test(url)
 
-  // --- Définition exacte des noms systèmes présents sur Supabase
   const SYSTEM_FILES = [
-    "clarify_end.mp4",
-    "clarify_end (1).mp4",
-    "clarify_start.mp4",
-    "idle_listen.mp4",
-    "idle_smile.mp4",
-    "intro_en_1.mp4",
-    "intro_en_2.mp4",
-    "listen_idle_01.mp4",
-    "nova_end_interview.mp4",
-    "nova_end_interview_en.mp4",
-    "nova_feedback_final.mp4",
-    "question_missing.mp4",
-    "thankyou.mp4",
+    "clarify_end",
+    "clarify_start",
+    "idle_listen",
+    "idle_smile",
+    "intro_en_1",
+    "intro_en_2",
+    "intro_fr_1",
+    "intro_fr_2",
+    "listen_idle_01",
+    "nova_end_interview",
+    "nova_feedback_final",
+    "question_missing",
+    "thankyou",
   ]
 
-  // --- Si l'URL contient un fichier système → ce n'est PAS une question
   const isSystem = SYSTEM_FILES.some((name) => url.includes(name))
 
-  // --- Une vidéo de question doit :
-  //     1. contenir q_
-  //     2. ne pas être un système
   return isQ && !isSystem
 }
 
@@ -104,6 +103,22 @@ function shouldEnableMic(url: string | null): boolean {
 function isIdleSmileVideo(url: string | null): boolean {
   if (!url) return false
   return url.includes("idle_smile") || url.includes("smile")
+}
+
+function pushQuestionToChat(chatRef: React.RefObject<NovaChatBoxTextOnlyRef | null>, question: any, lang = "en") {
+  if (!chatRef?.current || !question) return
+
+  const text =
+    question[`audio_prompt_${lang}`] ||
+    question[`text_${lang}`] ||
+    question[`question_${lang}`] ||
+    question.question_en ||
+    question.question_fr ||
+    null
+
+  if (text) {
+    chatRef.current.addMessage("nova", text.trim())
+  }
 }
 
 export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }) {
@@ -156,6 +171,28 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const isAudioMode = simulationMode === "audio"
   const isVideoMode = simulationMode === "video"
 
+  const handleTranscript = useCallback((t: string) => {
+    responseMetrics.current.currentTranscript = t
+    setLastFollowupText(t)
+
+    if (idleMgrRef.current?.onUserSpeaking) {
+      idleMgrRef.current.onUserSpeaking()
+    }
+  }, [])
+
+  const handleSilenceConfirmed = useCallback((metrics: any) => {
+    console.log("🔇 Silence confirmed (WS)", metrics)
+    idleMgrRef.current?.handleSilence()
+  }, [])
+
+  const handleUserSpeaking = useCallback(() => {
+    console.log("🗣️ User speaking")
+  }, [])
+
+  const handleSilenceStart = useCallback(() => {
+    console.log("📢 Silence start detected")
+  }, [])
+
   useEffect(() => {
     if (!hasStarted) return
 
@@ -164,10 +201,12 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       // Resume AudioContext if suspended (requires user interaction)
       recordingRef.current.startRecording()
       setMicEnabled(true)
+      novaEnableMic() // Enable microphone using novaEnableMic
     } else if (!isListeningPhase && recordingRef.current?.isRecording?.()) {
       console.log("[v0] Closing microphone - listening phase ended")
       recordingRef.current.stopRecording()
       setMicEnabled(false)
+      novaDisableMic() // Disable microphone using novaDisableMic
     }
   }, [isListeningPhase, hasStarted])
 
@@ -275,50 +314,22 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     })()
   }, [sessionId, playlist, router])
 
+  /* ============================================================
+     🧠 IDLE MANAGER INIT
+  ============================================================ */
   useEffect(() => {
-    if (!session || !flowRef.current) return
+    if (!session || !playlist) return
 
     idleMgrRef.current = new NovaIdleManager_Playlist({
-      lang: session.lang || "en",
+      session,
       playlist,
-      onNextQuestion: async () => {
-        console.log("[v0] IdleManager: Moving to next question")
-        setIsListeningPhase(false)
-        setIsSilencePhase(false)
-        idleLoopStartedRef.current = false
-
-        const next = await flowRef.current.fetchNextQuestion()
-        if (next) {
-          if (next.type === "video") {
-            playlist.add(next.url)
-          } else if (next.type === "audio") {
-            responseMetrics.current.currentQuestionId = next.question.id
-            await playAudioQuestion(next.question)
-            const idle = await flowRef.current.getIdleListen()
-            playlist.add(idle)
-          }
-          playlist.isPlaying = false
-          playlist.next()
-        } else {
-          console.log("🏁 Fin des questions → vidéos de clôture")
-          const end1 = await getSystemVideo("nova_end_interview_en", session.lang || "en")
-          const end2 = await getSystemVideo("nova_feedback_final", session.lang || "en")
-          playlist.add(end1, end2)
-          playlist.isPlaying = false
-          playlist.next()
-        }
-      },
-      getFollowupText: async () => lastFollowupText,
+      lastFollowupText: () => lastFollowupText,
+      flowRef: () => flowRef.current,
       onRelanceStart: () => {
-        console.log("[v0] IdleManager: Relance starting - closing mic")
         setIsListeningPhase(false)
-        setIsSilencePhase(false)
       },
       onRelanceEnd: () => {
-        console.log("[v0] IdleManager: Relance ended - reopening mic")
-        idleLoopStartedRef.current = false
         setIsListeningPhase(true)
-        setIsSilencePhase(false)
       },
     })
 
@@ -330,17 +341,28 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       console.log("[v0] Playlist emitted video:", next)
       setVideoSrc(next)
 
-      if (shouldEnableMic(next) && !isIdleSmileVideo(next)) {
-        console.log("[v0] Idle listen video detected - enabling mic")
+      if (!next) return
+
+      if (isQuestionVideo(next)) {
+        novaDisableMic()
+        setIsListeningPhase(false)
+        setIsSilencePhase(false)
+        return
+      }
+
+      if (shouldEnableMic(next)) {
+        novaEnableMic()
         setIsListeningPhase(true)
         setIsSilencePhase(false)
-        if (!idleLoopStartedRef.current) {
-          idleLoopStartedRef.current = true
-          idleMgrRef.current?.startLoop?.()
-        }
-      } else if (isIdleSmileVideo(next)) {
-        console.log("[v0] Idle smile video detected - silence phase")
+        idleMgrRef.current?.startLoop?.()
+        return
+      }
+
+      if (isIdleSmileVideo(next)) {
+        novaDisableMic()
+        setIsListeningPhase(false)
         setIsSilencePhase(true)
+        return
       }
     }
 
@@ -354,7 +376,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [playlist])
 
   useEffect(() => {
-    async function setupUserCamera() {
+    const setupUserCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 1280, height: 720 },
@@ -409,12 +431,12 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
           v.pause()
           setVideoPaused(true)
           setIsPlaying(false)
-          console.log("⏸ Pause vidéo (spacebar):", videoSrc)
+          novaDisableMic() // Disable microphone when video is paused
         } else {
           v.play()
           setVideoPaused(false)
           setIsPlaying(true)
-          console.log("▶️ Reprise vidéo (spacebar):", videoSrc)
+          novaEnableMic() // Enable microphone when video starts playing again
         }
       }
     }
@@ -473,21 +495,13 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       await startNovaTranscription({
         sessionId,
         userId: session?.user_id,
-        onTranscript: (t) => {
-          responseMetrics.current.currentTranscript = t
-          setLastFollowupText(t)
-
-          if (idleMgrRef.current?.onUserSpeaking) {
-            idleMgrRef.current.onUserSpeaking()
-          }
-        },
-        onSilence: (metrics) => {
-          ;(window as any).__novaSilence?.(metrics)
-        },
-        onSpeaking: () => {
-          ;(window as any).__novaSpeechStart?.()
-        },
+        onTranscript: handleTranscript,
+        onSilence: handleSilenceConfirmed,
+        onSpeaking: handleUserSpeaking,
       })
+
+      novaDisableMic()
+      setIsListeningPhase(false)
     } catch (err) {
       console.error("❌ Erreur pendant le handleStart:", err)
     }
@@ -499,12 +513,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     console.log("⏹ Clip terminé:", videoSrc)
 
     const currentSrc = typeof videoSrc === "string" ? videoSrc : null
-    const prevSrc = prevVideoRef.current
-
-    if (isQuestionVideo(prevSrc) && !isQuestionVideo(currentSrc)) {
-      console.log("🎤 Question video ended - starting listening phase")
-      setIsListeningPhase(true)
-    }
 
     prevVideoRef.current = currentSrc
 
@@ -541,6 +549,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         return
       }
 
+      pushQuestionToChat(chatRef, first.question, lang)
+
       if (first.type === "video") {
         playlist.add(first.url)
         if (flow.ctx.currentQuestion?.id) {
@@ -550,15 +560,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         const q = first.question
         responseMetrics.current.currentQuestionId = q.id
 
-        const text =
-          q[`audio_prompt_${lang}`] ||
-          q[`text_${lang}`] ||
-          q[`question_${lang}`] ||
-          q.question_en ||
-          q.question_fr ||
-          ""
-
-        chatRef.current?.addMessage("nova", text)
         await playAudioQuestion(q)
 
         const idle = await flow.getIdleListen()
@@ -577,8 +578,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
-
-      setIsListeningPhase(true)
       idleMgrRef.current?.startLoop?.()
       return
     }
@@ -595,11 +594,14 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         responseMetrics.current.currentQuestionId = q.id
       }
 
+      pushQuestionToChat(chatRef, q, lang)
+
       await playAudioQuestion(q)
 
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
+      novaEnableMic() // Enable microphone after repetition audio
       return
     }
 
@@ -626,6 +628,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     if (flow.ctx.currentQuestion && responseMetrics.current.currentTranscript) {
       const transcript = responseMetrics.current.currentTranscript || ""
       await flow.sendFeedback(transcript)
+      novaEnableMic() // Enable microphone after sending feedback
       responseMetrics.current.currentTranscript = ""
 
       const idle = await flow.getIdleListen()
@@ -643,6 +646,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       const idle = await flow.getIdleListen()
       playlist.add(idle)
       playlist.next()
+      novaEnableMic() // Enable microphone in fallback
     }
   }
 
@@ -661,6 +665,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     const text =
       q[`audio_prompt_${lang}`] || q[`text_${lang}`] || q[`question_${lang}`] || q.question_en || q.question_fr || ""
     chatRef.current?.addMessage("nova", text)
+    console.log("🎤 [Nova] Question audio :", text)
     await novaVoice.speak(text)
   }
 
@@ -694,6 +699,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
     disableNovaTranscription()
     setMicEnabled(false)
+    novaDisableMic()
 
     playlist.reset?.()
     setIsPlaying(false)
@@ -735,40 +741,6 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }
 
-  /* ============================================================
-     🎙️ NovaRecorder Callbacks
-  ============================================================ */
-  const handleUserSpeaking = useCallback(() => {
-    console.log("[v0] User speaking detected")
-    idleMgrRef.current?.onUserSpeaking?.()
-    if (isSilencePhase) {
-      setIsSilencePhase(false)
-    }
-  }, [isSilencePhase])
-
-  const handleSilenceStart = useCallback(async () => {
-    console.log("[v0] Silence detection started - switching to idle_smile")
-    setIsSilencePhase(true)
-
-    if (flowRef.current) {
-      const smile = await getSystemVideo("idle_smile", session?.lang || "en")
-      playlist.add(smile)
-    }
-  }, [session, playlist])
-
-  const handleSilenceConfirmed = useCallback((metrics: any) => {
-    console.log("[v0] 5s silence confirmed - triggering relance")
-    setIsListeningPhase(false)
-    idleMgrRef.current?.handleSilence?.()
-  }, [])
-
-  const handleTranscript = useCallback((t: string) => {
-    responseMetrics.current.currentTranscript += " " + t
-    setLastFollowupText(responseMetrics.current.currentTranscript.trim())
-
-    idleMgrRef.current?.onUserSpeaking?.()
-  }, [])
-
   return (
     <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col antialiased">
       <header className="h-14 bg-black/80 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6">
@@ -778,7 +750,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             alt="Talentee"
             className="h-8 w-auto"
           />
-          <span className="text-xs text-white/40">🚀 v2.3</span>
+          <span className="text-xs text-white/40">🚀 v2.1</span>
         </div>
         <div className="flex items-center gap-4">
           {/* Live indicator */}
@@ -811,33 +783,19 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                 console.log("Lecture en cours:", videoSrc)
                 setIsPlaying(true)
 
-                const src = typeof videoSrc === "string" ? videoSrc : ""
-
-                if (isAudioMode && !(window as any).__novaAudioLock) {
-                  const q = flowRef.current?.ctx?.currentQuestion
-                  if (q) playAudioQuestion(q)
-                }
-
-                if (shouldEnableMic(src)) {
-                  setMicEnabled(true)
-                }
-
                 const q = flowRef.current?.ctx?.currentQuestion
-                if (q && isQuestionVideo(src)) {
-                  const lang = session?.lang || "en"
-                  const promptKey = `audio_prompt_${lang}`
-                  const textKey = `text_${lang}`
-                  const questionKey = `question_${lang}`
-                  const questionText =
-                    q[promptKey] || q[textKey] || q[questionKey] || q.question_en || q.question_fr || ""
+                const lang = session?.lang || "en"
 
-                  if (questionText && chatRef.current) {
-                    chatRef.current.addMessage("nova", questionText)
-                  }
+                // Affichage automatique dans le chat
+                if (isQuestionVideo(videoSrc) && q) {
+                  pushQuestionToChat(chatRef, q, lang)
+                }
 
-                  if (isAudioMode) {
-                    playAudioQuestion(q)
-                  }
+                novaDisableMic() // Micro OFF pendant toutes les videos (intro, question, relance)
+
+                // Audio mode fallback
+                if (isAudioMode && q) {
+                  playAudioQuestion(q)
                 }
               }}
               onPause={() => console.log("Pause detectee:", videoSrc)}
@@ -858,17 +816,12 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
                   setShowStartLoading(true)
 
-                  // 1. Ne JAMAIS toucher la vidéo ici - VideoPlayer gère le play
-                  // 2. Déverrouillage audio propre
                   setIsMuted(false)
 
-                  // 3. Petite illusion pendant 900ms
                   await new Promise((res) => setTimeout(res, 900))
 
-                  // 4. Démarrage réel
                   await handleStart()
 
-                  // 5. Fin du loading
                   setTimeout(() => setShowStartLoading(false), 300)
                 }}
                 variant="primary"

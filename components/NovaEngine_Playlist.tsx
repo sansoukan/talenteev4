@@ -67,7 +67,7 @@ function isQuestionVideo(url: string | null): boolean {
   if (!url) return false
 
   // --- Si le nom du fichier commence par q_ → question vidéo
-  const isQ = url.includes("/q_")
+  const isQ = url.includes("q_")
 
   // --- Définition exacte des noms systèmes présents sur Supabase
   const SYSTEM_FILES = [

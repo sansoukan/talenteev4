@@ -20,6 +20,7 @@ export type FlowState =
   | "RUN_VIDEO"
   | "ENDING"
   | "FEEDBACK_IDLE" // 💡 Nouveau : feedback = idle + TTS
+  | "RELANCE" // 💡 Nouveau : relance
 
 export interface FlowContext {
   session_id: string
@@ -270,6 +271,32 @@ export class NovaFlowController {
     } catch {
       return this.getIdleListen()
     }
+  }
+
+  // ============================================================
+  // 7️⃣ RELANCE (Clarify / Follow-up)
+  // ------------------------------------------------------------
+  //  Version minimaliste :
+  //   - 100% video
+  //   - Micro OFF
+  //   - Fallback automatique sur "clarify_start"
+  //   - Compatible FR/EN
+  // ============================================================
+  async getRelance() {
+    const lang = this.ctx.lang || "en"
+
+    // 1. Essayer video dediee "clarify_start"
+    try {
+      return await getSystemVideo("clarify_start", lang)
+    } catch {}
+
+    // 2. Fallback FR/EN universel
+    try {
+      return await getSystemVideo(`clarify_${lang}`, lang)
+    } catch {}
+
+    // 3. Fallback ultime => idle_smile (ne bloque jamais)
+    return await this.getIdleSmile()
   }
 
   // ============================================================

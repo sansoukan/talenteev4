@@ -10,6 +10,7 @@ import { MetalButton } from "@/components/ui/metal-button"
 import VideoPlayer from "@/components/VideoPlayer"
 import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox_TextOnly"
 import { Volume2, VolumeX } from "lucide-react"
+import { preloadSystemVideos } from "@/lib/preloadSystemVideos"
 
 const isDefined = (x: any) => x !== undefined && x !== null
 import { useNovaRealtimeVoice } from "@/hooks/useNovaRealtimeVoice"
@@ -25,6 +26,53 @@ import {
   novaDisableMic,
 } from "@/lib/voice-utils"
 import { NovaFlowController } from "@/lib/NovaFlowController"
+
+const STORAGE_KEY = "nova_session_progress"
+
+interface SessionProgress {
+  session_id: string
+  questionIndex: number
+  questions: any[]
+  lang: string
+  simulation_mode: string
+  firstname?: string | null
+  savedAt: number
+}
+
+function saveSessionProgress(data: SessionProgress) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+    console.log("[v0] Session progress saved, questionIndex:", data.questionIndex)
+  } catch (e) {
+    console.warn("[v0] Failed to save session progress:", e)
+  }
+}
+
+function loadSessionProgress(session_id: string): SessionProgress | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return null
+    const data: SessionProgress = JSON.parse(raw)
+    // Only restore if same session and not expired (24h)
+    if (data.session_id === session_id && Date.now() - data.savedAt < 24 * 60 * 60 * 1000) {
+      console.log("[v0] Session progress loaded, questionIndex:", data.questionIndex)
+      return data
+    }
+    return null
+  } catch (e) {
+    console.warn("[v0] Failed to load session progress:", e)
+    return null
+  }
+}
+
+function clearSessionProgress() {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+    console.log("[v0] Session progress cleared")
+  } catch (e) {
+    console.warn("[v0] Failed to clear session progress:", e)
+  }
+}
 
 /* ============================================================
    🔥 EMOTIONAL HEARTBEAT V5 — Niveau Google
@@ -319,6 +367,16 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
 
       console.log("📊 Questions reçues:", qs.length)
 
+      const savedProgress = loadSessionProgress(sessionId)
+      let questionsToUse = qs
+      let startQuestionIndex = 0
+
+      if (savedProgress && savedProgress.questions.length > 0) {
+        console.log("[v0] Restoring saved session, questionIndex:", savedProgress.questionIndex)
+        questionsToUse = savedProgress.questions
+        startQuestionIndex = savedProgress.questionIndex
+      }
+
       // 1) FlowController → toujours AVANT playlist.reset()
       flowRef.current = new NovaFlowController(
         sessionId,
@@ -328,7 +386,15 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       )
 
       // 2) Injection questions dans FlowController
-      flowRef.current.ctx.nextQuestions = [...qs]
+      if (startQuestionIndex > 0) {
+        // Resume: inject remaining questions starting from saved index
+        flowRef.current.ctx.currentQuestion = questionsToUse[startQuestionIndex] || null
+        flowRef.current.ctx.nextQuestions = questionsToUse.slice(startQuestionIndex + 1)
+        flowRef.current.ctx.state = "RUN_VIDEO" // Skip intro
+      } else {
+        // Fresh start
+        flowRef.current.ctx.nextQuestions = [...questionsToUse]
+      }
 
       // 3) Playlist reset → APRES FlowController
       playlist.reset?.()
@@ -336,8 +402,9 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       // 4) Session locale
       setSession({
         ...json,
-        questions: qs,
-        total_questions: qs.length,
+        questions: questionsToUse,
+        allQuestions: questionsToUse, // Keep original list for saving
+        total_questions: questionsToUse.length,
       })
 
       setHasStarted(false)
@@ -664,41 +731,46 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     }
   }, [])
 
-  const handleSessionEnd = async () => {
-    console.log("⏹ Fin de session par timer")
-
-    stopEmotionHeartbeat()
-    setIsListeningPhase(false)
-
-    try {
-      stopNovaTranscription()
-    } catch {}
-
-    disableNovaTranscription()
-    setMicEnabled(false)
+  const handleSessionEnd = useCallback(async () => {
+    console.log("[v0] Session ended")
     novaDisableMic()
+    disableNovaTranscription()
+    clearSessionProgress()
 
-    playlist.reset?.()
-    setIsPlaying(false)
-    setHasStarted(false)
-    videoRef.current?.pause()
+    if (flowRef.current) {
+      stopEmotionHeartbeat()
+      setIsListeningPhase(false)
 
-    idleMgrRef.current?.showEndScreen?.()
+      try {
+        stopNovaTranscription()
+      } catch {}
 
-    await fetch("/api/session/end", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId }),
-    }).catch(() => {})
+      disableNovaTranscription()
+      setMicEnabled(false)
+      novaDisableMic()
 
-    await fetch("/api/engine/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: sessionId }),
-    }).catch(() => {})
+      playlist.reset?.()
+      setIsPlaying(false)
+      setHasStarted(false)
+      videoRef.current?.pause()
 
-    await handleFinalFeedback()
-  }
+      idleMgrRef.current?.showEndScreen?.()
+
+      await fetch("/api/session/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      }).catch(() => {})
+
+      await fetch("/api/engine/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId }),
+      }).catch(() => {})
+
+      await handleFinalFeedback()
+    }
+  }, [sessionId])
 
   const handleFinalFeedback = async () => {
     console.log("🎯 Génération du feedback final...")
@@ -717,6 +789,33 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       setShowPreparingOverlay(false)
     }
   }
+
+  useEffect(() => {
+    const lang = session?.lang || "en"
+    preloadSystemVideos(lang)
+  }, [session?.lang])
+
+  useEffect(() => {
+    if (!session?.session_id || !flowRef.current?.ctx.currentQuestion) return
+
+    const currentQ = flowRef.current.ctx.currentQuestion
+    const allQuestions = session.allQuestions || session.questions || []
+    const currentIndex = allQuestions.findIndex(
+      (q: any) => q.question_id === currentQ.question_id || q.id === currentQ.id,
+    )
+
+    if (currentIndex >= 0) {
+      saveSessionProgress({
+        session_id: session.session_id,
+        questionIndex: currentIndex,
+        questions: allQuestions,
+        lang: session.lang || "en",
+        simulation_mode: session.simulation_mode || "video",
+        firstname: session.firstname || null,
+        savedAt: Date.now(),
+      })
+    }
+  }, [flowRef.current?.ctx.currentQuestion?.question_id, session?.session_id])
 
   return (
     <main className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col antialiased">

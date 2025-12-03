@@ -1,12 +1,12 @@
 /***********************************************************************
- 🔥 NOVA ENGINE — ORCHESTRATE V40 (GOOGLE-LEVEL, FULLY HARDENED)
+ NOVA ENGINE — ORCHESTRATE V40 (GOOGLE-LEVEL, FULLY HARDENED)
  ----------------------------------------------------------------------
- - INPUT SAFE : JSON validé, pas d’inner join cassant
- - MEMORY SAFE : askedIds nettoyés et typés
- - GENERAL PACK : jusqu’à 15 questions (3x diff1, 6x diff2, 6x diff3) + fallback
- - DOMAIN PACK : jusqu’à 45 questions par domaine, avec fallback de domaine
- - CAREER TARGET : filtre .overlaps() safe, ignoré si colonne non-array
- - NEVER EMPTY : si aucune question trouvée → fallback q_fallback_001
+ - INPUT SAFE : JSON valide, pas d'inner join cassant
+ - MEMORY SAFE : askedIds nettoyes et types
+ - GENERAL PACK : jusqu'a 15 questions (3x diff1, 6x diff2, 6x diff3) + fallback
+ - DOMAIN PACK : jusqu'a 45 questions par domaine, avec fallback de domaine
+ - CAREER TARGET : filtre .overlaps() safe, ignore si colonne non-array
+ - NEVER EMPTY : si aucune question trouvee → fallback q_fallback_001
  - COMPATIBLE : Flow V7.1 (GENERAL + DOMAIN GMAT), VideoPlayer double-buffer
 ************************************************************************/
 
@@ -79,6 +79,8 @@ export async function POST(req: Request) {
     /* 0. INPUT VALIDATION         */
     /* ============================ */
     const body = await req.json().catch(() => null)
+    console.log("📥 [ORCH-V40] Requête reçue avec payload:", body)
+
     if (!body || !body.session_id) {
       return NextResponse.json({ error: "Missing session_id" }, { status: 400 })
     }
@@ -111,6 +113,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 })
     }
 
+    console.log("📡 [ORCH-V40] Session chargée:", {
+      id: session?.id,
+      type_entretien: session?.type_entretien,
+      lang: session?.lang,
+      simulation_mode: session?.simulation_mode,
+      profile_exists: !!session?.profiles,
+    })
+
     const profile = session.profiles || {}
 
     const user_id = session.user_id
@@ -132,7 +142,14 @@ export async function POST(req: Request) {
       (isOperational ? PYRAMID_OP[primaryCareerTarget] : PYRAMID_ELITE[primaryCareerTarget]) ||
       (isOperational ? PYRAMID_OP["op_entry"] : PYRAMID_ELITE["student"])
 
-    console.log("[Orchestrate/V40] Profile:", { domain, subDomain, segment, primaryCareerTarget, pyramid })
+    console.log("👤 [ORCH-V40] Profil détecté:", {
+      prenom: profile?.prenom,
+      segment: profile?.segment,
+      career_stage: profile?.career_stage,
+      domain: profile?.domain,
+      subDomain: profile?.sub_domain,
+    })
+    console.log("🎯 [ORCH-V40] career_target pyramid:", pyramid)
 
     /* ============================ */
     /* 2. MEMORY → askedIds fusion  */
@@ -146,18 +163,22 @@ export async function POST(req: Request) {
       console.warn("[Orchestrate/V40] Memory read error:", memError)
     }
 
+    console.log("🧠 [ORCH-V40] Memory brute:", mem)
+
     let askedIds =
       (mem || [])
         .map((m) => m.question_id)
         .filter((id: any) => typeof id === "string" && id.startsWith("q_") && /^[a-zA-Z0-9_]+$/.test(id)) || []
 
     askedIds = [...new Set(askedIds)]
-    console.log("[Orchestrate/V40] askedIds:", askedIds)
+    console.log("🧹 [ORCH-V40] askedIds filtrés:", askedIds)
 
     /* ============================ */
     /* 3. INIT_Q1 SAFE FALLBACK     */
     /* ============================ */
     if (!askedIds.length && !session.detail?.init_q1_sent) {
+      console.log("🚀 [ORCH-V40] INIT_Q1 déclenché")
+
       const { data: q1, error: q1Error } = await supabaseAdmin
         .from("nova_questions")
         .select("*")
@@ -178,6 +199,8 @@ export async function POST(req: Request) {
             question_en: "Tell me about yourself.",
             video_url_en: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/videos/system/intro_en_1.mp4`,
           }
+
+      console.log("🎬 [ORCH-V40] INIT_Q1 question sélectionnée:", q1Norm)
 
       await supabaseAdmin
         .from("nova_sessions")
@@ -213,7 +236,9 @@ export async function POST(req: Request) {
     /* ============================ */
 
     async function fetchGeneral15(): Promise<any[]> {
-      console.log("[Orchestrate/V40] fetchGeneral15 start")
+      console.log("━━━━━━━━━━━━━━━━━━━━━━")
+      console.log("📦 [ORCH-V40] Génération GENERAL PACK")
+      console.log("━━━━━━━━━━━━━━━━━━━━━━")
 
       const generalUsed: string[] = [...used]
       const targetPerDiff: Record<number, number> = { 1: 3, 2: 6, 3: 6 }
@@ -221,6 +246,8 @@ export async function POST(req: Request) {
 
       async function fetchGeneralByDiff(diff: number, count: number): Promise<any[]> {
         if (count <= 0) return []
+
+        console.log(`🔍 [GENERAL] Fetch diff=${diff} target=${count}`)
 
         const safeUsed = generalUsed.length ? generalUsed : ["__none__"]
 
@@ -239,7 +266,7 @@ export async function POST(req: Request) {
           .eq("is_active", true)
           .eq("domain", "general")
           .eq("difficulty", diff)
-          .not("question_id", "in", safeUsed)
+          .not("question_id", "in", `(${safeUsed.map((id) => `'${id}'`).join(",")})`)
 
         // Filtre career_target safe (ARRAY only)
         if (Array.isArray(pyramid) && pyramid.length > 0) {
@@ -266,7 +293,7 @@ export async function POST(req: Request) {
             .eq("is_active", true)
             .eq("domain", "general")
             .eq("difficulty", diff)
-            .not("question_id", "in", safeUsed)
+            .not("question_id", "in", `(${safeUsed.map((id) => `'${id}'`).join(",")})`)
             .order("probability", { ascending: false })
             .limit(count)
           const rows = (retry || []).map(normalizeQuestion)
@@ -284,11 +311,21 @@ export async function POST(req: Request) {
       bucket[2] = await fetchGeneralByDiff(2, targetPerDiff[2])
       bucket[3] = await fetchGeneralByDiff(3, targetPerDiff[3])
 
+      console.log("📊 [GENERAL] Résultats:", {
+        lvl1: bucket[1].length,
+        lvl2: bucket[2].length,
+        lvl3: bucket[3].length,
+      })
+
       let allGeneral = [...bucket[1], ...bucket[2], ...bucket[3]]
 
-      // 2) Si <15, on complète avec GENERAL tous niveaux
+      console.log("📦 [GENERAL] total avant fallback:", allGeneral.length)
+
+      // 2) Si <15, on complete avec GENERAL tous niveaux
       if (allGeneral.length < 15) {
         const missing = 15 - allGeneral.length
+        console.log("📦 [GENERAL] fallback missing:", missing)
+
         const safeUsed = generalUsed.length ? generalUsed : ["__none__"]
 
         let qExtra = supabaseAdmin
@@ -305,7 +342,7 @@ export async function POST(req: Request) {
           )
           .eq("is_active", true)
           .eq("domain", "general")
-          .not("question_id", "in", safeUsed)
+          .not("question_id", "in", `(${safeUsed.map((id) => `'${id}'`).join(",")})`)
 
         if (Array.isArray(pyramid) && pyramid.length > 0) {
           qExtra = qExtra.overlaps("career_target", pyramid as any)
@@ -324,10 +361,10 @@ export async function POST(req: Request) {
         }
       }
 
-      // 3) Tri par difficulté croissante (Flow posera d'abord les plus faciles)
+      // 3) Tri par difficulte croissante (Flow posera d'abord les plus faciles)
       allGeneral.sort((a, b) => (a.difficulty || 1) - (b.difficulty || 1))
 
-      console.log("[Orchestrate/V40] GENERAL pack:", allGeneral.length, "questions (cible: 15)")
+      console.log("📦 [GENERAL] FINAL:", allGeneral.length)
       return allGeneral.slice(0, 15)
     }
 
@@ -335,11 +372,15 @@ export async function POST(req: Request) {
     used.push(...generalPack.map((q) => q.question_id))
 
     /* ============================ */
-    /* 6. DOMAIN PACK (≤45)         */
+    /* 6. DOMAIN PACK (<=45)         */
     /* ============================ */
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━`)
+    console.log(`📦 [ORCH-V40] Génération DOMAIN PACK`, { domain, subDomain })
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━`)
 
     async function fetchDomainBlock(level: number, count: number): Promise<any[]> {
       const difficulties = DIFF_CASCADE[level]
+      console.log(`🔍 [DOMAIN] Fetch diff=${level}, cascade=${difficulties}`)
       return fetchDomainQuestions({
         domain,
         subDomain,
@@ -365,7 +406,7 @@ export async function POST(req: Request) {
       usedIds: string[]
       limit: number
     }): Promise<any[]> {
-      const safeUsed = usedIds.length ? usedIds : ["__none__"]
+      const safeUsed = usedIds.length ? usedIds.map((id) => `'${id}'`).join(",") : "'__none__'"
 
       let base = supabaseAdmin
         .from("nova_questions")
@@ -380,7 +421,7 @@ export async function POST(req: Request) {
         `,
         )
         .eq("is_active", true)
-        .not("question_id", "in", safeUsed)
+        .not("question_id", "in", `(${safeUsed})`)
         .eq("domain", domain)
 
       if (subDomain) base = base.eq("sub_domain", subDomain)
@@ -398,10 +439,11 @@ export async function POST(req: Request) {
       if (error) {
         console.warn("[Orchestrate/V40] DOMAIN primary error:", error)
         // Retry sans filtre career_target
-        const retry = base.order("probability", { ascending: false }).limit(limit)
-        const resRetry = await retry
-        data = resRetry.data
-        error = resRetry.error
+        const { data: retryData, error: retryError } = await base
+          .order("probability", { ascending: false })
+          .limit(limit)
+        data = retryData
+        error = retryError
         if (error) {
           console.error("[Orchestrate/V40] DOMAIN retry error:", error)
           return []
@@ -410,10 +452,17 @@ export async function POST(req: Request) {
 
       rows = data || []
 
+      console.log("📦 [DOMAIN] total avant fallback:", rows.length)
+
       const missing = limit - rows.length
       if (missing > 0) {
         const fallbackDomains = DOMAIN_FALLBACK[domain] || []
+        console.log("📦 [DOMAIN] fallback domains utilisés:", fallbackDomains)
+
         if (fallbackDomains.length > 0) {
+          const fbSafeUsed = [...usedIds, ...rows.map((r) => r.question_id)]
+          const fbUsedStr = fbSafeUsed.length ? fbSafeUsed.map((id) => `'${id}'`).join(",") : "'__none__'"
+
           let fb = supabaseAdmin
             .from("nova_questions")
             .select(
@@ -427,7 +476,7 @@ export async function POST(req: Request) {
             `,
             )
             .eq("is_active", true)
-            .not("question_id", "in", safeUsed)
+            .not("question_id", "in", `(${fbUsedStr})`)
             .in("domain", fallbackDomains)
 
           if (difficulties?.length) fb = fb.in("difficulty", difficulties)
@@ -435,9 +484,7 @@ export async function POST(req: Request) {
             fb = fb.overlaps("career_target", careerTargets as any)
           }
 
-          const { data: fbRows, error: fbError } = await fb
-            .order("probability", { ascending: false })
-            .limit(missing)
+          const { data: fbRows, error: fbError } = await fb.order("probability", { ascending: false }).limit(missing)
 
           if (fbError) {
             console.warn("[Orchestrate/V40] DOMAIN fallback error:", fbError)
@@ -461,36 +508,30 @@ export async function POST(req: Request) {
 
     const domainPackRaw = [...block1, ...block2, ...block3]
 
-    /* ---------------------------
-     * FLOWERS SORT (DOMAIN)
-     * --------------------------- */
-    function flowersSort(qs: any[]) {
-      const score = (q: any) => {
-        const d = q.difficulty || 1
-        const p = q.probability || 0.5
-        const w = d === 1 ? 1 : d === 2 ? 0.7 : 0.4
-        return p * w * (0.9 + Math.random() * 0.2)
-      }
-      return [...qs].sort((a, b) => score(b) - score(a))
-    }
+    console.log("[DOMAIN] Résultats par niveau:", {
+      block1: block1.length,
+      block2: block2.length,
+      block3: block3.length,
+    })
+    console.log("📦 [DOMAIN] FINAL:", domainPackRaw.length)
 
+    /* ============================ */
+    /* 7. NEVER EMPTY PACK          */
+    /* ============================ */
     const sortedGeneral = generalPack.map((q) => {
       delete (q as any).id
       return normalizeQuestion(q)
     })
 
-    const sortedDomain = flowersSort(domainPackRaw).map((q) => {
+    const sortedDomain = domainPackRaw.map((q) => {
       delete (q as any).id
       return normalizeQuestion(q)
     })
 
     let finalQuestions = [...sortedGeneral, ...sortedDomain]
 
-    /* ============================ */
-    /* 7. NEVER EMPTY PACK          */
-    /* ============================ */
     if (finalQuestions.length === 0) {
-      console.error("[Orchestrate/V40] CRITICAL: EMPTY PACK → FALLBACK")
+      console.error("❌ [ORCH-V40] PACK VIDE — fallback question unique déclenché")
 
       const fallbackQuestion = {
         question_id: "q_fallback_001",
@@ -503,11 +544,13 @@ export async function POST(req: Request) {
       finalQuestions = [fallbackQuestion]
     }
 
-    console.log("[Orchestrate/V40] Final pack:", {
+    console.log("━━━━━━━━━━━━━━━━━━━━━━")
+    console.log("📦 [ORCH-V40] PACK FINAL", {
       general: sortedGeneral.length,
       domain: sortedDomain.length,
       total: finalQuestions.length,
     })
+    console.log("━━━━━━━━━━━━━━━━━━━━━━")
 
     /* ============================ */
     /* 8. SAVE PACK INTO SESSION    */
@@ -524,6 +567,11 @@ export async function POST(req: Request) {
     /* ============================ */
     /* 9. RETURN PACK               */
     /* ============================ */
+    console.log("📤 [ORCH-V40] Payload envoyé à NovaEngine:", {
+      total_questions: finalQuestions.length,
+      first_question: finalQuestions[0]?.question_id,
+    })
+
     return NextResponse.json({
       action: "INIT_SEQUENCE",
       session_id,

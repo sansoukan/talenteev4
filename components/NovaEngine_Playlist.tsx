@@ -204,6 +204,66 @@ function pushQuestionToChat(chatRef: React.RefObject<NovaChatBoxTextOnlyRef | nu
   }
 }
 
+async function fallbackToStartProfile(
+  sessionId: string,
+  flowRef: React.MutableRefObject<NovaFlowController | null>,
+  playlist: NovaPlaylistManager,
+  setSession: (s: any) => void,
+  setVideoSrc: (s: string | null) => void,
+  setHasStarted: (b: boolean) => void,
+  setIsPlaying: (b: boolean) => void,
+) {
+  console.warn("[NovaEngine] Orchestrate EMPTY PACK -> fallback START")
+
+  // 1. Reset profile + memory
+  await fetch("/api/engine/reload-start-profile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+
+  // 2. Relancer orchestrate proprement
+  const res = await fetch("/api/engine/orchestrate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+
+  const json = await res.json()
+
+  // 3. Reinitialiser FlowController
+  flowRef.current = new NovaFlowController(
+    sessionId,
+    json.lang || "en",
+    json.simulation_mode || ((json.lang || "en") === "en" ? "video" : "audio"),
+    json.firstname || null,
+  )
+
+  // 4. Injecter toutes les questions
+  flowRef.current.ctx.nextQuestions = json.questions || []
+  flowRef.current.ctx.currentQuestion = null
+
+  // 5. Rejouer INTRO_1 puis INTRO_2
+  const intro1 = await flowRef.current.getIntro1()
+  playlist.reset()
+  playlist.add(intro1)
+  playlist.next()
+
+  // 6. Update session state
+  setSession({
+    ...json,
+    questions: json.questions || [],
+    allQuestions: json.questions || [],
+    total_questions: (json.questions || []).length,
+  })
+
+  setHasStarted(true)
+  setIsPlaying(true)
+  ;(window as any).__novaFlow = flowRef.current
+
+  console.log("[NovaEngine] Fallback START -> INTRO_1 rejoue")
+}
+
 export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }) {
   const router = useRouter()
   const recordingRef = useRef<any>(null)
@@ -342,7 +402,9 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             body: JSON.stringify({ session_id: sessionId }),
           })
           json = await res.json()
-        } catch {
+          console.log("[v0] orchestrate attempt", attempts + 1, "status:", res?.status, "json:", json)
+        } catch (e) {
+          console.error("[v0] orchestrate fetch error:", e)
           json = null
         }
 
@@ -356,11 +418,24 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         attempts++
       }
 
-      if (!json) {
-        console.error("❌ Orchestrate null → Dashboard")
-        router.push("/dashboard")
+      if (
+        !json ||
+        json.error ||
+        !json.questions ||
+        json.questions.length === 0 ||
+        (Array.isArray(json.questions) && json.questions[0]?.question_id === "q_fallback_001")
+      ) {
+        console.warn("[v0] EMPTY PACK detecte -> fallbackToStartProfile()")
+        console.log("[v0] json recu:", json)
+        await fallbackToStartProfile(sessionId, flowRef, playlist, setSession, setVideoSrc, setHasStarted, setIsPlaying)
         return
       }
+
+      console.log("[v0] Profile detecte depuis orchestrate:")
+      console.log("[v0]   - lang:", json.lang)
+      console.log("[v0]   - simulation_mode:", json.simulation_mode)
+      console.log("[v0]   - firstname:", json.firstname)
+      console.log("[v0]   - questions:", json.questions?.length)
 
       // ---------------------------------------------------------
       // CAS 1 — INIT_Q1

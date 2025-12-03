@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation"
 import NovaRecorder from "@/components/NovaRecorder"
 import { useRepeatIntent } from "@/hooks/useRepeatIntent"
 import { MetalButton } from "@/components/ui/metal-button"
-import VideoPlayer from "@/components/VideoPlayer"
+import VideoPlayer, { type VideoPlayerHandle } from "@/components/VideoPlayer"
 import NovaChatBox_TextOnly, { type NovaChatBoxTextOnlyRef } from "./NovaChatBox_TextOnly"
 import { Volume2, VolumeX } from "lucide-react"
 import { preloadSystemVideos } from "@/lib/preloadSystemVideos"
@@ -28,6 +28,31 @@ import {
 import { NovaFlowController } from "@/lib/NovaFlowController"
 
 const STORAGE_KEY = "nova_session_progress"
+
+function micOff(setIsListeningPhase: (v: boolean) => void, setIsSilencePhase: (v: boolean) => void) {
+  novaDisableMic()
+  setIsListeningPhase(false)
+  setIsSilencePhase(false)
+}
+
+function micOn(setIsListeningPhase: (v: boolean) => void, setIsSilencePhase: (v: boolean) => void) {
+  novaEnableMic()
+  setIsListeningPhase(true)
+  setIsSilencePhase(false)
+}
+
+async function gotoIdle(
+  flow: any,
+  playlist: NovaPlaylistManager,
+  idleLoopRef: React.MutableRefObject<boolean>,
+  setIsListeningPhase: (v: boolean) => void,
+  setIsSilencePhase: (v: boolean) => void,
+) {
+  idleLoopRef.current = false
+  const idle = await flow.getIdleListen()
+  playlist.add(idle)
+  playlist.next()
+}
 
 interface SessionProgress {
   session_id: string
@@ -186,7 +211,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const playlist = useRef(new NovaPlaylistManager()).current
   const idleMgrRef = useRef<any>(null)
   const flowRef = useRef<any>(null)
-  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const videoRef = useRef<VideoPlayerHandle | null>(null)
   const userCameraRef = useRef<HTMLVideoElement | null>(null)
 
   const prevVideoRef = useRef<string | null>(null)
@@ -480,52 +505,42 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         sessionStorage.setItem("nova_last_video", next)
       }
 
-      // 1. Toutes les videos = micro OFF
-      novaDisableMic()
-      setIsListeningPhase(false)
-      setIsSilencePhase(false)
+      micOff(setIsListeningPhase, setIsSilencePhase)
 
-      // 2. Si pas de video -> rien a faire
       if (!next) return
 
-      // 3. Question video -> micro OFF
+      // Question video -> micro OFF
       if (isQuestionVideo(next)) {
-        console.log("[v0] Question video -> mic OFF (attente fin de question)")
+        console.log("[v0] Question video -> mic OFF")
         return
       }
 
-      // 4. Relance video (clarify, relance) -> micro OFF
+      // Relance video -> micro OFF
       if (isRelanceVideo(next)) {
-        console.log("[v0] Relance video (clarify/relance) -> mic OFF")
+        console.log("[v0] Relance video -> mic OFF")
         return
       }
 
-      // 5. idle_smile -> silence phase (micro OFF)
+      // idle_smile -> silence phase
       if (isIdleSmileVideo(next)) {
-        console.log("[v0] idle_smile -> silence visuel (mic OFF)")
+        console.log("[v0] idle_smile -> silence visuel")
         setIsSilencePhase(true)
         return
       }
 
-      // --- PATCH idle_listen PRODUCTION ---
       if (isIdleListen(next)) {
         if (idleLoopStartedRef.current) {
           console.log("[NovaPatch] idle_listen deja actif -> skip")
           return
         }
-
-        console.log("[NovaPatch] idle_listen -> mic ON + idle loop")
+        console.log("[NovaPatch] idle_listen -> mic ON")
         idleLoopStartedRef.current = true
-        setIsSilencePhase(false)
-        setIsListeningPhase(true)
-        novaEnableMic()
-
+        micOn(setIsListeningPhase, setIsSilencePhase)
         idleMgrRef.current?.startLoop?.()
         return
       }
 
-      // 7. Fallback
-      console.log("[v0] handleVideoChange fallback -> nothing special for:", next)
+      console.log("[v0] handleVideoChange fallback:", next)
     }
 
     playlist.subscribe(handleVideoChange)
@@ -658,6 +673,8 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     prevVideoRef.current = justFinished
 
     const state = flow.ctx.state
+
+    // Intro reload strict
     if (!hasStarted && (state === "INTRO_1" || state === "INTRO_2")) {
       console.log("[NovaPatch] Reload intro strict")
       playlist.reset()
@@ -667,53 +684,39 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
+    // Skip si idle_listen
     if (isIdleListen(prevVideoRef.current || "")) {
-      console.log("[NovaPatch] idle_listen terminé -> IdleManager gère -> skip handleEnded")
+      console.log("[NovaPatch] idle_listen termine -> skip")
       return
     }
 
-    const lang = session?.lang || flow.ctx.lang || "en"
-
+    // Reset idleLoop pour intros
     if (state === "INTRO_1" || state === "INTRO_2") {
       idleLoopStartedRef.current = false
     }
 
     if ((state === "Q1_VIDEO" || state === "RUN_VIDEO") && isQuestionVideo(justFinished)) {
       console.log("[v0] Question finished -> idle_listen")
-      idleLoopStartedRef.current = false
-      const idle = await flow.getIdleListen()
-      playlist.add(idle)
-      playlist.next()
+      await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
       return
     }
 
-    // QUESTION (sans check justFinished) -> idle_listen
     if (state === "Q1_VIDEO" || state === "RUN_VIDEO") {
       console.log("[v0] Fin de question -> idle_listen")
-      idleLoopStartedRef.current = false
-      const idle = await flow.getIdleListen()
-      playlist.add(idle)
-      playlist.next()
+      await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
       return
     }
 
-    // FEEDBACK (si on a un transcript)
     if (responseMetrics.current.currentTranscript) {
       console.log("[v0] Fin de feedback -> idle_listen")
       await flow.sendFeedback(responseMetrics.current.currentTranscript)
       responseMetrics.current.currentTranscript = ""
-
-      const idle = await flow.getIdleListen()
-      playlist.add(idle)
-      playlist.next()
+      await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
       return
     }
 
-    // FALLBACK - ne jamais rester bloque
     console.log("[v0] handleEnded fallback -> idle_listen")
-    const idle = await flow.getIdleListen()
-    playlist.add(idle)
-    playlist.next()
+    await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
   }
 
   const playAudioQuestion = async (q: any) => {
@@ -874,7 +877,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
             <VideoPlayer
               ref={videoRef}
               src={videoSrc}
-              autoPlay={!isMuted}
+              autoPlay={true}
               muted={isMuted}
               playsInline
               onPlay={() => {
@@ -931,20 +934,41 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               }}
             >
               <button
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.stopPropagation()
-                  const v = videoRef.current
-                  if (!v) return
 
-                  if (v.paused) {
-                    v.play().catch((err) => console.warn("[NovaPatch] play() error:", err))
-                    setVideoPaused(false)
-                    setIsPlaying(true)
-                    novaDisableMic()
-                  } else {
-                    v.pause()
-                    setVideoPaused(true)
-                    setIsPlaying(false)
+                  const player = videoRef.current
+                  const el = player?.element
+
+                  if (!el) {
+                    console.warn("[NovaEngine] No video element found")
+                    return
+                  }
+
+                  try {
+                    if (el.paused) {
+                      await el.play()
+                      setVideoPaused(false)
+                      setIsPlaying(true)
+                      novaDisableMic()
+                    } else {
+                      el.pause()
+                      setVideoPaused(true)
+                      setIsPlaying(false)
+                    }
+                  } catch (err) {
+                    console.warn("🚨 Play blocked by browser autoplay policy:", err)
+
+                    el.muted = true
+                    setIsMuted(true)
+
+                    try {
+                      await el.play()
+                      setVideoPaused(false)
+                      setIsPlaying(true)
+                    } catch (err2) {
+                      console.error("🚨 Hard fallback failed:", err2)
+                    }
                   }
                 }}
                 className="w-20 h-20 rounded-full bg-white/20 backdrop-blur-xl border border-white/30 flex items-center justify-center transition-all duration-200 hover:scale-110 hover:bg-white/30 active:scale-95 cursor-pointer pointer-events-auto shadow-2xl"

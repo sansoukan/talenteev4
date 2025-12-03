@@ -673,14 +673,28 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     prevVideoRef.current = justFinished
 
     const state = flow.ctx.state
+    console.log("[v0] handleEnded state:", state)
 
-    // Intro reload strict
-    if (!hasStarted && (state === "INTRO_1" || state === "INTRO_2")) {
-      console.log("[NovaPatch] Reload intro strict")
-      playlist.reset()
-      const intro = state === "INTRO_1" ? await flow.getIntro1() : await flow.getIntro2()
-      playlist.add(intro)
+    if (state === "INTRO_1") {
+      console.log("[v0] INTRO_1 finished -> INTRO_2")
+      idleLoopStartedRef.current = false
+      const intro2 = await flow.getIntro2()
+      playlist.add(intro2)
       playlist.next()
+      return
+    }
+
+    if (state === "INTRO_2") {
+      console.log("[v0] INTRO_2 finished -> Q1")
+      idleLoopStartedRef.current = false
+      const q1 = await flow.fetchQ1()
+      if (q1) {
+        const videoUrl = q1.video_url || q1.video_url_en || q1.video_url_fr
+        if (videoUrl) {
+          playlist.add(videoUrl)
+          playlist.next()
+        }
+      }
       return
     }
 
@@ -690,13 +704,9 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
       return
     }
 
-    // Reset idleLoop pour intros
-    if (state === "INTRO_1" || state === "INTRO_2") {
-      idleLoopStartedRef.current = false
-    }
-
     if ((state === "Q1_VIDEO" || state === "RUN_VIDEO") && isQuestionVideo(justFinished)) {
       console.log("[v0] Question finished -> idle_listen")
+      idleLoopStartedRef.current = false
       await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
       return
     }

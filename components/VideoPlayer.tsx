@@ -1,6 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useImperativeHandle, forwardRef } from "react"
+import type React from "react"
+
+import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from "react"
 
 interface VideoPlayerProps {
   src: string
@@ -22,6 +24,7 @@ export interface VideoPlayerHandle {
   get paused(): boolean
   get currentTime(): number
   get element(): HTMLVideoElement | null
+  unmute: () => void
 }
 
 const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
@@ -29,7 +32,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     {
       src,
       autoPlay = false,
-      muted = true,
+      muted: initialMuted = true,
       loop = false,
       playsInline = true,
       onReady,
@@ -46,6 +49,8 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     const videoB = useRef<HTMLVideoElement | null>(null)
     const isA = useRef(true)
     const lastSrc = useRef<string | null>(null)
+    const endedFiredRef = useRef(false)
+    const [isMuted, setIsMuted] = useState(initialMuted)
 
     useImperativeHandle(ref, () => ({
       play: async () => {
@@ -73,6 +78,12 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       get element() {
         return isA.current ? videoA.current : videoB.current
       },
+      unmute: () => {
+        setIsMuted(false)
+        if (videoA.current) videoA.current.muted = false
+        if (videoB.current) videoB.current.muted = false
+        console.log("[VideoPlayer] Audio unmuted")
+      },
     }))
 
     const swapVideo = () => {
@@ -88,7 +99,9 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       if (next) {
         next.style.opacity = "1"
         next.style.zIndex = "1"
+        next.muted = isMuted
       }
+      endedFiredRef.current = false
     }
 
     useEffect(() => {
@@ -113,7 +126,16 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
             onPlay?.()
           }
         } catch (err) {
-          console.warn("[VideoPlayer] Autoplay blocked:", err)
+          console.warn("[VideoPlayer] Autoplay blocked, trying muted:", err)
+          buffer.muted = true
+          setIsMuted(true)
+          try {
+            await buffer.play()
+            onReady?.()
+            onPlay?.()
+          } catch (e) {
+            console.error("[VideoPlayer] Cannot play even muted:", e)
+          }
         }
       }
 
@@ -123,14 +145,31 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
     }, [src, autoPlay, onReady, onPlay])
 
     const unlockAudio = async () => {
+      setIsMuted(false)
+      if (videoA.current) videoA.current.muted = false
+      if (videoB.current) videoB.current.muted = false
+
       const active = isA.current ? videoA.current : videoB.current
-      if (!active) return
-      try {
-        active.muted = false
-        await active.play()
-        onUnlockAudio?.()
-      } catch (err) {
-        console.warn("[VideoPlayer] Cannot enable audio:", err)
+      if (active && active.paused) {
+        try {
+          await active.play()
+        } catch (err) {
+          console.warn("[VideoPlayer] Cannot play on click:", err)
+        }
+      }
+      onUnlockAudio?.()
+      console.log("[VideoPlayer] Audio unlocked via click")
+    }
+
+    const handleEnded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+      const target = e.currentTarget
+      const active = isA.current ? videoA.current : videoB.current
+
+      // Ne trigger que si c'est la video active et pas deja triggered
+      if (target === active && !endedFiredRef.current) {
+        endedFiredRef.current = true
+        console.log("[VideoPlayer] onEnded triggered for:", src)
+        onEnded?.()
       }
     }
 
@@ -143,11 +182,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           ref={videoA}
           className={`${baseClass} ${transitionStyle} absolute inset-0`}
           style={{ opacity: 1, zIndex: 1 }}
-          muted={muted}
+          muted={isMuted}
           playsInline={playsInline}
           loop={loop}
           preload="auto"
-          onEnded={onEnded}
+          onEnded={handleEnded}
           onPlay={onPlay}
           onPause={onPause}
           onClick={unlockAudio}
@@ -156,11 +195,11 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           ref={videoB}
           className={`${baseClass} ${transitionStyle} absolute inset-0`}
           style={{ opacity: 0, zIndex: 0 }}
-          muted={muted}
+          muted={isMuted}
           playsInline={playsInline}
           loop={loop}
           preload="auto"
-          onEnded={onEnded}
+          onEnded={handleEnded}
           onPlay={onPlay}
           onPause={onPause}
           onClick={unlockAudio}

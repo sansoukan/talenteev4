@@ -234,7 +234,7 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   const [showDashboardButton, setShowDashboardButton] = useState(false)
   const [userCameraHovered, setUserCameraHovered] = useState(false)
   const [videoHovered, setVideoHovered] = useState(false)
-  const [videoPaused, setVideoPaused] = useState(false)
+  const [videoPaused, setVideoPaused] = useState(false) // Add videoPaused state synced with actual video state
   const [micEnabled, setMicEnabled] = useState(false)
   const [isListeningPhase, setIsListeningPhase] = useState(false)
   const [isSilencePhase, setIsSilencePhase] = useState(false)
@@ -291,17 +291,23 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current)
     }
-    controlsTimeoutRef.current = setTimeout(() => {
-      setShowControls(false)
-    }, 3000)
-  }, [])
+    // Don't hide controls if video is paused
+    if (!videoPaused) {
+      controlsTimeoutRef.current = setTimeout(() => {
+        setShowControls(false)
+      }, 3000)
+    }
+  }, [videoPaused])
 
   const handleVideoMouseLeave = useCallback(() => {
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current)
     }
-    setShowControls(false)
-  }, [])
+    // Don't hide controls if video is paused
+    if (!videoPaused) {
+      setShowControls(false)
+    }
+  }, [videoPaused])
 
   useEffect(() => {
     if (!hasStarted) return
@@ -893,12 +899,15 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
               onPlay={() => {
                 console.log("[v0] Playing:", videoSrc)
                 setIsPlaying(true)
+                setVideoPaused(false)
                 hasUserInteractedRef.current = true
                 novaDisableMic()
               }}
               onPause={() => {
                 console.log("[v0] Pause detectee:", videoSrc)
                 setIsPlaying(false)
+                setVideoPaused(true)
+                setShowControls(true)
               }}
               onEnded={handleEnded}
               className="absolute inset-0 w-full h-full object-contain"
@@ -955,29 +964,27 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
                     return
                   }
 
+                  console.log("[v0] Button clicked, video paused state:", el.paused)
+
                   try {
                     if (el.paused) {
+                      console.log("[v0] Attempting to play...")
                       await el.play()
-                      setVideoPaused(false)
-                      setIsPlaying(true)
-                      novaDisableMic()
+                      console.log("[v0] Play successful")
                     } else {
+                      console.log("[v0] Pausing video...")
                       el.pause()
-                      setVideoPaused(true)
-                      setIsPlaying(false)
+                      console.log("[v0] Pause successful")
                     }
                   } catch (err) {
-                    console.warn("🚨 Play blocked by browser autoplay policy:", err)
-
+                    console.warn("[v0] Play blocked by browser autoplay policy:", err)
                     el.muted = true
                     setIsMuted(true)
-
                     try {
                       await el.play()
-                      setVideoPaused(false)
-                      setIsPlaying(true)
+                      console.log("[v0] Play with mute successful")
                     } catch (err2) {
-                      console.error("🚨 Hard fallback failed:", err2)
+                      console.error("[v0] Hard fallback failed:", err2)
                     }
                   }
                 }}

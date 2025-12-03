@@ -1,24 +1,11 @@
 // ===============================================================
-//  NovaFlowController.ts — V7.1 (Production-ready, Google-level)
+//  NovaFlowController.ts — V7.2 (Google-level)
 // ---------------------------------------------------------------
-//  Règles métier :
-//   - Q1 : question générale q_0001 (gérée via orchestrate).
-//   - Phase GENERAL (après Q1) :
-//       * Flow pose jusqu'à 5 questions GENERAL max (Q1 incluse).
-//       * Si le pack ne contient que 2 ou 3 GENERAL → Flow pose ce qu'il a,
-//         puis passe aux DOMAIN (aucun ajout artificiel).
-//   - Phase DOMAIN (GMAT) :
-//       * Jusqu'à 20 questions DOMAIN max.
-//       * GMAT : score >= 65 → niveau++, score < 50 → niveau--, sinon niveau stable.
-//       * Fallback niveau :
-//           lvl1 -> 1 -> 2 -> 3
-//           lvl2 -> 2 -> 1 -> 3
-//           lvl3 -> 3 -> 2 -> 1
-//   - Fallback GENERAL après DOMAIN :
-//       * Si DOMAIN épuisé, mais GENERAL pool encore non vide,
-//         Flow peut utiliser ces GENERAL restantes tant que total < 25.
-//   - Total max = 25 questions (GENERAL + DOMAIN).
-//   - Si tout est épuisé ou limite atteinte → fin de session (fetchNextQuestion → null).
+//  Fix les 4 problemes critiques :
+//   1) GENERAL dans l'ORDRE orchestrate (pas triees par difficulte)
+//   2) Domain GMAT fallback securise pour difficulty manquante
+//   3) Fin de pools GENERAL + DOMAIN -> renvoie null proprement
+//   4) returnQuestion() garantie payload compatible NovaEngine
 // ===============================================================
 
 import { getSystemVideo } from "@/lib/videoManager"
@@ -40,22 +27,21 @@ export interface FlowContext {
   lang: string
   mode: "audio" | "video"
   firstname?: string | null
-
   currentQuestion?: any | null
   nextQuestions?: any[] | null
   state: FlowState
 
-  // Pools dérivés de nextQuestions
+  // Pools derives de nextQuestions
   poolsInitialized: boolean
-  generalPool: any[]              // domain === "general", triées par difficulté asc.
+  generalPool: any[] // domain === "general", triees par difficulte asc
   domainPool: { 1: any[]; 2: any[]; 3: any[] }
 
   // Compteurs
-  questionCount: number           // total questions posées (Q1 + GENERAL + DOMAIN)
-  generalQuestionsCount: number   // nb de GENERAL posées (Q1 incluse)
-  maxInitialGeneral: number       // cible Q1–Q5 (max 5 GENERAL)
-  maxDomainQuestions: number      // 20 max
-  currentDifficulty: 1 | 2 | 3    // niveau courant GMAT
+  questionCount: number
+  generalQuestionsCount: number
+  maxGeneralQuestions: number // 5 obligatoires
+  maxDomainQuestions: number // 20 max
+  currentDifficulty: 1 | 2 | 3
   scores: number[]
 }
 
@@ -76,24 +62,24 @@ export class NovaFlowController {
       domainPool: { 1: [], 2: [], 3: [] },
       questionCount: 0,
       generalQuestionsCount: 0,
-      maxInitialGeneral: 5,
+      maxGeneralQuestions: 5,
       maxDomainQuestions: 20,
       currentDifficulty: 1,
       scores: [],
     }
-
-    console.log("[Nova] FlowController V7.1 initialized", {
+    console.log("[Nova] FlowController V7.2 initialized", {
       session_id,
       lang,
       mode,
-      maxInitialGeneral: this.ctx.maxInitialGeneral,
-      maxDomain: this.ctx.maxDomainQuestions,
-      maxTotal: this.ctx.maxInitialGeneral + this.ctx.maxDomainQuestions, // 25
+      maxGeneral: 5,
+      maxDomain: 20,
+      maxTotal: 25,
+      fallback: "GENERAL restantes si DOMAIN epuise",
     })
   }
 
   // -----------------------------------------------------------
-  // Transition sécurisée
+  // Transition securisee
   // -----------------------------------------------------------
   private transition(next: FlowState) {
     console.log(`[Nova] STATE: ${this.ctx.state} -> ${next}`)
@@ -101,7 +87,7 @@ export class NovaFlowController {
   }
 
   // ===========================================================
-  // 0. INIT POOLS (GENERAL + DOMAIN) à partir de nextQuestions
+  // 0. INIT POOLS (GENERAL + DOMAIN) a partir de nextQuestions
   // ===========================================================
   private ensurePools() {
     if (this.ctx.poolsInitialized) return
@@ -116,27 +102,24 @@ export class NovaFlowController {
     for (const q of src) {
       if (!q) continue
       if (q.domain === "general") {
-        general.push(q)
+        general.push(q) // V7.2: on garde L'ORDRE orchestre
       } else {
-        const diff = typeof q.difficulty === "number" ? q.difficulty : 1
-        if (diff <= 1) d1.push(q)
-        else if (diff === 2) d2.push(q)
+        const d = q.difficulty || 1 // securise difficulte
+        if (d <= 1) d1.push(q)
+        else if (d === 2) d2.push(q)
         else d3.push(q)
       }
     }
-
-    // GENERAL : on commence par la difficulté la plus basse dispo
-    general.sort((a, b) => (a.difficulty || 1) - (b.difficulty || 1))
 
     this.ctx.generalPool = general
     this.ctx.domainPool = { 1: d1, 2: d2, 3: d3 }
     this.ctx.poolsInitialized = true
 
-    console.log("[Nova] ensurePools()", {
+    console.log("[Nova] Pools ready (NO SORT):", {
       general: general.length,
-      domain1: d1.length,
-      domain2: d2.length,
-      domain3: d3.length,
+      d1: d1.length,
+      d2: d2.length,
+      d3: d3.length,
       total: general.length + d1.length + d2.length + d3.length,
     })
   }
@@ -146,11 +129,13 @@ export class NovaFlowController {
   // ===========================================================
   async getIntro1() {
     this.transition("INTRO_1")
+    console.log("[Nova] Playing INTRO_1")
     return await getSystemVideo(`intro_${this.ctx.lang}_1`, this.ctx.lang)
   }
 
   async getIntro2() {
     this.transition("INTRO_2")
+    console.log("[Nova] Playing INTRO_2")
     return await getSystemVideo(`intro_${this.ctx.lang}_2`, this.ctx.lang)
   }
 
@@ -160,23 +145,23 @@ export class NovaFlowController {
   async fetchQ1() {
     console.log("[Nova] fetchQ1() called")
 
-    // CAS 1 - Q1 déjà injectée côté front
+    // CAS 1 - Q1 deja injectee
     if (this.ctx.currentQuestion && (!this.ctx.nextQuestions || this.ctx.nextQuestions.length === 0)) {
-      console.log("[Nova] Q1 déjà injectée par le front")
+      console.log("[Nova] Q1 already injected from frontend")
       this.ctx.questionCount = 1
       this.ctx.generalQuestionsCount = 1
-      return this.returnQuestion(this.ctx.currentQuestion, "Q1")
+      return this._returnQuestion(this.ctx.currentQuestion, "Q1")
     }
 
-    // CAS 2 - Q1 + nextQuestions déjà définies
+    // CAS 2 - Q1 + pool deja envoyes par orchestrate
     if (this.ctx.currentQuestion && Array.isArray(this.ctx.nextQuestions)) {
-      console.log("[Nova] Q1 déjà définie, utilisation directe")
+      console.log("[Nova] Q1 + nextQuestions already set")
       this.ctx.questionCount = 1
       this.ctx.generalQuestionsCount = 1
-      return this.returnQuestion(this.ctx.currentQuestion, "Q1")
+      return this._returnQuestion(this.ctx.currentQuestion, "Q1")
     }
 
-    // CAS 3 - Appel orchestrate
+    // CAS 3 - Fetch orchestrate
     console.log("[Nova] Calling orchestrate API...")
     const res = await fetch("/api/engine/orchestrate", {
       method: "POST",
@@ -187,10 +172,7 @@ export class NovaFlowController {
       return null
     })
 
-    if (!res) {
-      console.error("[Nova] Orchestrate response is null")
-      return null
-    }
+    if (!res) return null
 
     let json: any = null
     try {
@@ -200,118 +182,88 @@ export class NovaFlowController {
       return null
     }
 
-    if (!json || (!Array.isArray(json.questions) && !json.question)) {
-      console.error("[Nova] Orchestrate payload invalide:", json)
+    if (!json || (!json.question && !json.questions)) {
+      console.error("[Nova] Orchestrate returned invalid payload:", json)
       return null
     }
 
-    const q1 = json.question || json.questions?.[0]
-    if (!q1) {
-      console.error("[Nova] Orchestrate n'a pas fourni q1")
-      return null
-    }
+    const q1 = json.question || json.questions[0] || null
+    if (!q1) return null
 
     this.ctx.currentQuestion = q1
 
-    // Stocker toutes les autres questions dans nextQuestions
-    const allQuestions = Array.isArray(json.questions) ? [...json.questions] : []
-    if (allQuestions.length && allQuestions[0]?.question_id === q1.question_id) {
-      allQuestions.shift()
-    }
+    // PATCH IMPORTANT: NE PAS SHIFT()
+    // On conserve *toutes* les questions renvoyees pour la GMAT sequence
+    this.ctx.nextQuestions = Array.isArray(json.questions) ? [...json.questions] : []
 
-    this.ctx.nextQuestions = allQuestions
     this.ctx.poolsInitialized = false
-
-    this.ctx.questionCount = 1
     this.ctx.generalQuestionsCount = 1
+    this.ctx.questionCount = 1
 
-    console.log("[Nova] Q1:", q1.question_id, "| diff:", q1.difficulty, "| domain:", q1.domain)
-    console.log("[Nova] Questions restantes:", this.ctx.nextQuestions.length)
+    console.log("[Nova] Q1 received:", q1.question_id)
+    console.log("[Nova] Total nextQuestions:", this.ctx.nextQuestions.length)
 
-    return this.returnQuestion(q1, "Q1")
+    return this._returnQuestion(q1, "Q1")
   }
 
   // ===========================================================
-  // 3. RUNNING QUESTIONS — GENERAL puis DOMAIN GMAT + fallback
+  // 3. RUNNING QUESTIONS — GENERAL puis DOMAIN avec fallback
   // ===========================================================
   async fetchNextQuestion() {
-    const maxTotal = this.ctx.maxInitialGeneral + this.ctx.maxDomainQuestions // 25
+    const MAX = this.ctx.maxGeneralQuestions + this.ctx.maxDomainQuestions // 25
 
+    console.log("[Nova] ─────────────────────────────────────")
     console.log("[Nova] fetchNextQuestion() called")
-    console.log("[Nova] questionCount:", this.ctx.questionCount, "/", maxTotal)
-    console.log("[Nova] generalCount:", this.ctx.generalQuestionsCount, "/", this.ctx.maxInitialGeneral)
+    console.log("[Nova] questionCount:", this.ctx.questionCount, "/", MAX)
 
-    // Limite totale
-    if (this.ctx.questionCount >= maxTotal) {
-      console.log("[Nova] LIMITE ATTEINTE - 25 questions posées")
+    if (this.ctx.questionCount >= MAX) {
+      console.log("[Nova] LIMIT 25 reached -> END")
       return null
     }
 
-    if (!Array.isArray(this.ctx.nextQuestions)) {
-      console.warn("[Nova] nextQuestions non initialisé")
-      return null
-    }
-
+    // Initialiser les pools
     this.ensurePools()
 
-    const generalRemaining = this.ctx.generalPool.length
-    const domainRemaining =
-      this.ctx.domainPool[1].length + this.ctx.domainPool[2].length + this.ctx.domainPool[3].length
+    const generalLeft = this.ctx.generalPool.length
+    const domainLeft = this.ctx.domainPool[1].length + this.ctx.domainPool[2].length + this.ctx.domainPool[3].length
 
-    const domainCount = this.ctx.questionCount - this.ctx.generalQuestionsCount
+    console.log("[Nova] Pools: GENERAL=", generalLeft, "| DOMAIN=", domainLeft)
 
-    console.log("[Nova] generalRemaining:", generalRemaining, "| domainRemaining:", domainRemaining)
-
-    if (generalRemaining === 0 && domainRemaining === 0) {
-      console.log("[Nova] Aucune question restante (GENERAL + DOMAIN épuisés)")
+    if (generalLeft === 0 && domainLeft === 0) {
+      console.log("[Nova] ALL POOLS EMPTY -> END SESSION")
       return null
     }
 
     let next: any = null
 
-    // PHASE GENERAL (initiale) — on veut poser jusqu'à maxInitialGeneral GENERAL (Q1 comprise)
-    if (this.ctx.generalQuestionsCount < this.ctx.maxInitialGeneral && generalRemaining > 0) {
-      console.log("[Nova] Phase: GENERAL (initiale)")
-      next = this.pickNextGeneral()
-      if (next) {
-        this.ctx.generalQuestionsCount++
-        console.log("[Nova] Question GENERAL", this.ctx.generalQuestionsCount, ":", next.question_id)
-      }
+    // GENERAL obligatoire Q1-Q5
+    if (this.ctx.generalQuestionsCount < this.ctx.maxGeneralQuestions && generalLeft > 0) {
+      next = this._pickNextGeneral()
+      if (next) this.ctx.generalQuestionsCount++
     }
 
-    // PHASE DOMAIN (GMAT)
-    if (!next && domainCount < this.ctx.maxDomainQuestions) {
-      if (domainRemaining > 0) {
-        console.log("[Nova] Phase: DOMAIN (GMAT)")
-        next = this.pickNextDomainGMAT()
-        if (next) {
-          console.log("[Nova] Question DOMAIN", domainCount + 1, ":", next.question_id, "| diff:", next.difficulty)
-        }
-      } else {
-        // DOMAIN épuisé → fallback GENERAL *si* il en reste encore
-        if (generalRemaining > 0 && this.ctx.questionCount < maxTotal) {
-          console.log("[Nova] FALLBACK: DOMAIN épuisé, utilisation GENERAL restantes")
-          next = this.pickNextGeneral()
-          if (next) {
-            this.ctx.generalQuestionsCount++
-            console.log("[Nova] Question GENERAL (fallback):", next.question_id)
-          }
-        }
-      }
+    // DOMAIN GMAT
+    if (!next && domainLeft > 0) {
+      next = this._pickNextDomainGMAT()
+    }
+
+    // FALLBACK GENERAL si DOMAIN vide
+    if (!next && generalLeft > 0) {
+      console.log("[Nova] FALLBACK using remaining GENERAL")
+      next = this._pickNextGeneral()
     }
 
     if (!next) {
-      console.log("[Nova] Aucune question trouvée (GENERAL + DOMAIN + fallback)")
+      console.log("[Nova] fetchNextQuestion(): NOTHING LEFT -> END")
       return null
     }
 
     this.ctx.currentQuestion = next
     this.ctx.questionCount++
 
-    console.log("[Nova] Question", this.ctx.questionCount, ":", next.question_id)
-    console.log("[Nova] difficulty:", next.difficulty, "| domain:", next.domain)
+    console.log("[Nova] QUESTION", this.ctx.questionCount, ":", next.question_id, "| diff:", next.difficulty)
 
-    return this.returnQuestion(next, "RUN")
+    return this._returnQuestion(next, "RUN")
   }
 
   // ===========================================================
@@ -324,6 +276,7 @@ export class NovaFlowController {
     const lang = this.ctx.lang
 
     console.log("[Nova] sendFeedback() pour question:", q.question_id)
+    console.log("[Nova] Transcript length:", transcript?.length || 0)
 
     const res = await fetch("/api/engine/feedback-question", {
       method: "POST",
@@ -351,15 +304,16 @@ export class NovaFlowController {
     }
 
     const score = json?.score_auto ?? 0
-    console.log("[Nova] Feedback reçu - score_auto:", score)
+    console.log("[Nova] Feedback recu - score_auto:", score)
 
-    // Ajustement GMAT seulement pour DOMAIN (pas pour GENERAL ni fallback GENERAL)
-    const isDomainQuestion = this.ctx.currentQuestion?.domain !== "general"
-
-    if (this.ctx.generalQuestionsCount >= this.ctx.maxInitialGeneral && isDomainQuestion) {
-      this.adjustDifficultyGMAT(score)
+    // Ajuster difficulte SEULEMENT si phase DOMAIN (apres Q5)
+    if (
+      this.ctx.generalQuestionsCount >= this.ctx.maxGeneralQuestions &&
+      this.ctx.currentQuestion?.domain !== "general"
+    ) {
+      this._adjustDifficultyGMAT(score)
     } else {
-      console.log("[Nova] Pas d'ajustement GMAT (GENERAL ou phase GENERAL)")
+      console.log("[Nova] Phase GENERAL ou question GENERAL fallback - pas d'ajustement")
     }
 
     this.transition("FEEDBACK_IDLE")
@@ -374,16 +328,16 @@ export class NovaFlowController {
   // HELPERS — GENERAL & DOMAIN
   // ===========================================================
 
-  // GENERAL : on prend la question de difficulté la plus basse dispo
-  private pickNextGeneral(): any | null {
+  // GENERAL : prend la question de difficulte la plus basse dispo
+  private _pickNextGeneral(): any | null {
     if (!this.ctx.generalPool.length) return null
     const q = this.ctx.generalPool.shift()!
     this.ctx.currentQuestion = q
     return q
   }
 
-  // DOMAIN GMAT : ajustement de la difficulté
-  private adjustDifficultyGMAT(score: number) {
+  // GMAT : ajuster la difficulte pour DOMAIN
+  private _adjustDifficultyGMAT(score: number) {
     this.ctx.scores.push(score)
     const old = this.ctx.currentDifficulty
 
@@ -398,19 +352,14 @@ export class NovaFlowController {
     }
   }
 
-  // DOMAIN : sélection GMAT avec fallback 1→2→3, 2→1→3, 3→2→1
-  private pickNextDomainGMAT(): any | null {
+  // DOMAIN : selection avec fallback 1->2->3, 2->1->3, 3->2->1
+  private _pickNextDomainGMAT(): any | null {
     const dp = this.ctx.domainPool
-    const totalLeft = dp[1].length + dp[2].length + dp[3].length
-
-    if (totalLeft === 0) {
-      console.log("[Nova] DOMAIN pools vides")
-      return null
-    }
 
     const tryLevel = (lvl: 1 | 2 | 3): any | null => {
       if (dp[lvl].length > 0) {
         const q = dp[lvl].shift()!
+        q.difficulty = q.difficulty || lvl // V7.2: fallback securite
         this.ctx.currentDifficulty = lvl
         this.ctx.currentQuestion = q
         return q
@@ -418,6 +367,7 @@ export class NovaFlowController {
       return null
     }
 
+    // V7.2: fallback complet base sur difficulte actuelle
     const lvl = this.ctx.currentDifficulty
     let q: any | null = null
 
@@ -429,12 +379,23 @@ export class NovaFlowController {
       q = tryLevel(3) || tryLevel(2) || tryLevel(1)
     }
 
+    if (!q) console.log("[Nova] GMAT DOMAIN exhausted")
     return q
   }
 
-  // Retourne la question formatée
-  private returnQuestion(q: any, phase: "Q1" | "RUN") {
+  private _returnQuestion(q: any, phase: "Q1" | "RUN") {
     const videoUrl = this.ctx.lang === "fr" ? q.video_url_fr || q.video_url_en : q.video_url_en || q.video_url_fr
+
+    const finalUrl =
+      videoUrl || "https://qpnalviccuopdwfscoli.supabase.co/storage/v1/object/public/videos/system/question_missing.mp4"
+
+    console.log("[Nova] Emit question:", {
+      phase,
+      id: q.question_id,
+      domain: q.domain,
+      difficulty: q.difficulty,
+      url: finalUrl,
+    })
 
     if (this.ctx.mode === "audio") {
       this.transition(phase === "Q1" ? "Q1_AUDIO" : "RUN_AUDIO")
@@ -442,11 +403,11 @@ export class NovaFlowController {
     }
 
     this.transition(phase === "Q1" ? "Q1_VIDEO" : "RUN_VIDEO")
+
+    // V7.2: url OBLIGATOIRE pour NovaEngine
     return {
       type: "video",
-      url:
-        videoUrl ||
-        "https://qpnalviccuopdwfscoli.supabase.co/storage/v1/object/public/system/question_missing.mp4",
+      url: finalUrl,
       question: q,
     }
   }
@@ -496,31 +457,44 @@ export class NovaFlowController {
   // 7. SESSION END
   // ===========================================================
   async endSession() {
+    console.log("[Nova] =========================================")
     console.log("[Nova] endSession() called")
-    console.log("[Nova] Total questions posées:", this.ctx.questionCount)
+    console.log("[Nova] ─────────────────────────────────────")
+    console.log("[Nova] Total questions posees:", this.ctx.questionCount)
     console.log("[Nova] Questions GENERAL:", this.ctx.generalQuestionsCount)
     console.log("[Nova] Questions DOMAIN:", this.ctx.questionCount - this.ctx.generalQuestionsCount)
     console.log("[Nova] Scores:", this.ctx.scores)
-    console.log(
-      "[Nova] Score moyen:",
+
+    const avgScore =
       this.ctx.scores.length > 0
         ? (this.ctx.scores.reduce((a, b) => a + b, 0) / this.ctx.scores.length).toFixed(1)
-        : "N/A",
-    )
+        : "N/A"
+    console.log("[Nova] Score moyen:", avgScore)
+    console.log("[Nova] =========================================")
 
     this.transition("ENDING")
 
-    await fetch("/api/session/end", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: this.ctx.session_id }),
-    }).catch(() => {})
+    try {
+      await fetch("/api/session/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: this.ctx.session_id }),
+      })
+      console.log("[Nova] /api/session/end OK")
+    } catch (e) {
+      console.error("[Nova] /api/session/end FAILED:", e)
+    }
 
-    await fetch("/api/engine/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ session_id: this.ctx.session_id }),
-    }).catch(() => {})
+    try {
+      await fetch("/api/engine/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: this.ctx.session_id }),
+      })
+      console.log("[Nova] /api/engine/complete OK")
+    } catch (e) {
+      console.error("[Nova] /api/engine/complete FAILED:", e)
+    }
 
     return true
   }

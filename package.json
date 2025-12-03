@@ -2,13 +2,18 @@
   "name": "my-v0-project",
   "version": "0.1.0",
   "private": true,
+
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "build:flow": "tsc -p tsconfig.flow.json",
+    "flow-test": "node cli/flow_simulator.js",
+    "gmat-test": "node cli/gmat_simulator.js"
   },
+
   "dependencies": {
     "@deepgram/sdk": "^4.11.2",
     "@elevenlabs/elevenlabs-js": "^2.20.1",
@@ -99,6 +104,7 @@
     "ws": "latest",
     "zod": "3.25.67"
   },
+
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
     "@types/node": "^22",

@@ -698,33 +698,51 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
   }, [sessionId, session, simulationMode])
 
   /* ============================================================
-     🎬 START HANDLER
+     🎬 START HANDLER — FIX V7
+     -------------------------------------------------------------
+     - Reset propre
+     - hasStarted = true uniquement après intro1
+     - autoplay garanti
   ============================================================ */
   async function handleStart() {
-    console.log("[v0] handleStart called")
+    console.log("[Start] Click received → resetting engine")
 
+    // Reset playlist + états
     playlist.reset?.()
-    console.log("♻️ Playlist nettoyée avant démarrage")
+    setHasStarted(false)
+    setIsPlaying(false)
+    setVideoSrc(null)
+    setVideoPaused(false)
+    novaDisableMic()
 
-    if (!session) return console.warn("⚠️ Session non chargée")
-
-    if (!flowRef.current) {
-      console.error("❌ FlowController non initialisé")
+    if (!session) {
+      console.error("[Start] Session not loaded")
       return
     }
 
+    if (!flowRef.current) {
+      console.log("[Start] Creating FlowController…")
+      flowRef.current = new NovaFlowController(
+        sessionId,
+        session.lang || "en",
+        session.simulation_mode || ((session.lang || "en") === "en" ? "video" : "audio"),
+        session.firstname || null,
+      )
+    }
+
     try {
+      console.log("[Start] Fetching intro1…")
       const intro1 = await flowRef.current.getIntro1()
-      console.log("[v0] Got intro1:", intro1)
 
       playlist.add(intro1)
-      console.log("[v0] Added intro1 to playlist, size:", playlist.size())
+      playlist.next()
 
-      console.log("🎞️ Playlist initialisée avec intro_1")
-      setIsPlaying(true)
-      setVideoPaused(false)
+      console.log("[Start] intro1 added → PLAYLIST STARTED")
+
       setHasStarted(true)
+      setIsPlaying(true)
 
+      // Enable STT now that intro is playing
       await startNovaTranscription({
         sessionId,
         userId: session?.user_id,
@@ -732,81 +750,67 @@ export default function NovaEngine_Playlist({ sessionId }: { sessionId: string }
         onSilence: handleSilenceConfirmed,
         onSpeaking: handleUserSpeaking,
       })
-
       novaDisableMic()
-      setIsListeningPhase(false)
     } catch (err) {
-      console.error("❌ Erreur pendant le handleStart:", err)
+      console.error("[Start] ERROR:", err)
     }
   }
 
+  /* ============================================================
+     🎬 handleEnded — FIX V7
+     -------------------------------------------------------------
+     - INTRO_1 → INTRO_2
+     - INTRO_2 → Q1
+     - Q1 → idle_listen
+  ============================================================ */
   const handleEnded = async () => {
-    console.log("[v0] Clip termine:", videoSrc)
-
     const flow = flowRef.current
-    if (!flow) {
-      console.warn("[v0] handleEnded sans FlowController")
-      return
-    }
+    const ended = videoSrc
 
-    // Track last finished video
-    const justFinished = typeof videoSrc === "string" ? videoSrc : null
-    prevVideoRef.current = justFinished
+    console.log("[Ended] Clip finished:", ended)
+
+    if (!flow) return console.warn("[Ended] No FlowController")
 
     const state = flow.ctx.state
-    console.log("[v0] handleEnded state:", state)
+    console.log("[Ended] Flow state:", state)
 
+    /* INTRO → INTRO */
     if (state === "INTRO_1") {
-      console.log("[v0] INTRO_1 finished -> INTRO_2")
-      idleLoopStartedRef.current = false
+      console.log("[Ended] Playing INTRO_2…")
       const intro2 = await flow.getIntro2()
       playlist.add(intro2)
       playlist.next()
       return
     }
 
+    /* INTRO → Q1 */
     if (state === "INTRO_2") {
-      console.log("[v0] INTRO_2 finished -> Q1")
-      idleLoopStartedRef.current = false
+      console.log("[Ended] Fetching Q1…")
       const q1 = await flow.fetchQ1()
+
       if (q1) {
-        const videoUrl = q1.video_url || q1.video_url_en || q1.video_url_fr
-        if (videoUrl) {
-          playlist.add(videoUrl)
-          playlist.next()
-        }
+        const url = q1.video_url || q1.video_url_en || q1.video_url_fr
+        console.log("[Ended] Q1 video:", url)
+        playlist.add(url)
+        playlist.next()
+      } else {
+        console.error("[Ended] Q1 missing → fallback question_missing")
+        playlist.add(
+          "https://qpnalviccuopdwfscoli.supabase.co/storage/v1/object/public/videos/system/question_missing.mp4",
+        )
+        playlist.next()
       }
       return
     }
 
-    // Skip si idle_listen
-    if (isIdleListen(prevVideoRef.current || "")) {
-      console.log("[NovaPatch] idle_listen termine -> skip")
-      return
-    }
-
-    if ((state === "Q1_VIDEO" || state === "RUN_VIDEO") && isQuestionVideo(justFinished)) {
-      console.log("[v0] Question finished -> idle_listen")
-      idleLoopStartedRef.current = false
-      await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
-      return
-    }
-
+    /* QUESTION → idle_listen */
     if (state === "Q1_VIDEO" || state === "RUN_VIDEO") {
-      console.log("[v0] Fin de question -> idle_listen")
+      console.log("[Ended] Question finished → idle_listen")
       await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
       return
     }
 
-    if (responseMetrics.current.currentTranscript) {
-      console.log("[v0] Fin de feedback -> idle_listen")
-      await flow.sendFeedback(responseMetrics.current.currentTranscript)
-      responseMetrics.current.currentTranscript = ""
-      await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
-      return
-    }
-
-    console.log("[v0] handleEnded fallback -> idle_listen")
+    console.log("[Ended] Fallback → idle_listen")
     await gotoIdle(flow, playlist, idleLoopStartedRef, setIsListeningPhase, setIsSilencePhase)
   }
 

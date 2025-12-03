@@ -2,18 +2,16 @@
   "name": "my-v0-project",
   "version": "0.1.0",
   "private": true,
-
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
     "start": "next start",
     "postinstall": "patch-package",
-    "build:flow": "tsc -p tsconfig.flow.json",
+    "build:flow": "tsc lib/NovaFlowController.ts --outDir dist --module ES2020 --target ES2020 --esModuleInterop",
     "flow-test": "node cli/flow_simulator.js",
     "gmat-test": "node cli/gmat_simulator.js"
   },
-
   "dependencies": {
     "@deepgram/sdk": "^4.11.2",
     "@elevenlabs/elevenlabs-js": "^2.20.1",
@@ -60,7 +58,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "latest",
-    "crypto": "latest",
     "csv-parse": "latest",
     "date-fns": "4.1.0",
     "dotenv": "^17.2.2",
@@ -102,9 +99,15 @@
     "unframer": "latest",
     "vaul": "latest",
     "ws": "latest",
-    "zod": "3.25.67"
+    "zod": "3.25.67",
+    "express": "5.2.1",
+    "cors": "2.8.5",
+    "html2canvas": "1.4.1",
+    "fs": "0.0.1-security",
+    "path": "0.12.7",
+    "crypto": "1.0.1",
+    "child_process": "1.0.2"
   },
-
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
     "@types/node": "^22",
